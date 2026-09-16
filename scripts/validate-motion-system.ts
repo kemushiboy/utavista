@@ -9,6 +9,9 @@ import {
   tween
 } from '../src/renderer/motion/Motion';
 import { createEntrance, createSustain } from '../src/renderer/motion/Scene';
+import { createShuffledText, destructionEnvelope } from '../src/renderer/motion/TypographyEffects';
+import { kineticSceneVariations } from '../src/renderer/data/kineticSceneVariations';
+import { KineticSceneTemplate } from '../src/renderer/templates/KineticSceneTemplate';
 
 const context = { seed: 2026, index: 3, total: 12, intensity: 1 };
 const clip = parallel(
@@ -33,5 +36,19 @@ assert.ok(composed.scaleX > 1);
 assert.equal(deterministicNoise(42), deterministicNoise(42));
 assert.deepEqual(combineMotionStates(first), first);
 
-console.log('Motion system validation passed.');
+const shuffled = createShuffledText('DATA', 0.25, 180, 45, '01#', 2026);
+assert.equal(shuffled, createShuffledText('DATA', 0.25, 180, 45, '01#', 2026));
+assert.equal(createShuffledText('DATA', 1, 180, 45, '01#', 2026), 'DATA');
+assert.equal(destructionEnvelope(0, 900), 0);
+assert.ok(destructionEnvelope(450, 900) > 0.99);
+assert.ok(Math.abs(destructionEnvelope(900, 900)) < 1e-10);
 
+assert.equal(kineticSceneVariations.length, 6);
+const kineticParameterNames = new Set(new KineticSceneTemplate().getParameterConfig().map(parameter => parameter.name));
+kineticSceneVariations.forEach(variation => {
+  Object.keys(variation.params).forEach(parameterName => {
+    assert.ok(kineticParameterNames.has(parameterName), `${variation.name}: 未定義パラメータ ${parameterName}`);
+  });
+});
+
+console.log('Motion system validation passed.');

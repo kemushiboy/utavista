@@ -25,6 +25,8 @@ const TemplatePresetPanel: React.FC<TemplatePresetPanelProps> = ({
     () => presets.find(preset => preset.id === selectedId),
     [presets, selectedId]
   );
+  const builtInPresets = presets.filter(preset => preset.builtIn);
+  const userPresets = presets.filter(preset => !preset.builtIn);
 
   const reload = () => setPresets(TemplatePresetService.list(templateId));
 
@@ -109,23 +111,44 @@ const TemplatePresetPanel: React.FC<TemplatePresetPanelProps> = ({
           }}
         >
           <option value="">選択してください</option>
-          {presets.map(preset => (
-            <option key={preset.id} value={preset.id}>{preset.name}</option>
-          ))}
+          {builtInPresets.length > 0 && (
+            <optgroup label="内蔵バリエーション">
+              {builtInPresets.map(preset => (
+                <option key={preset.id} value={preset.id}>{preset.name}</option>
+              ))}
+            </optgroup>
+          )}
+          {userPresets.length > 0 && (
+            <optgroup label="ユーザープリセット">
+              {userPresets.map(preset => (
+                <option key={preset.id} value={preset.id}>{preset.name}</option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </label>
+
+      {selectedPreset?.description && (
+        <div className="template-preset-description">
+          <strong>{selectedPreset.builtIn ? '内蔵バリエーション' : 'プリセット'}</strong>
+          <span>{selectedPreset.description}</span>
+          {selectedPreset.referenceUrl && (
+            <a href={selectedPreset.referenceUrl} target="_blank" rel="noreferrer">参考実装を開く</a>
+          )}
+        </div>
+      )}
 
       <div className="template-preset-actions">
         <button type="button" onClick={() => savePreset(false)} disabled={!name.trim()}>
           新規保存
         </button>
-        <button type="button" onClick={() => savePreset(true)} disabled={!selectedPreset || !name.trim()}>
+        <button type="button" onClick={() => savePreset(true)} disabled={!selectedPreset || selectedPreset.builtIn || !name.trim()}>
           上書き
         </button>
         <button type="button" onClick={applyPreset} disabled={!selectedPreset}>
           適用
         </button>
-        <button type="button" className="danger" onClick={deletePreset} disabled={!selectedPreset}>
+        <button type="button" className="danger" onClick={deletePreset} disabled={!selectedPreset || selectedPreset.builtIn}>
           削除
         </button>
       </div>
@@ -136,4 +159,3 @@ const TemplatePresetPanel: React.FC<TemplatePresetPanelProps> = ({
 };
 
 export default TemplatePresetPanel;
-

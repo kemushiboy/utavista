@@ -1,3 +1,5 @@
+import { kineticSceneVariations } from '../data/kineticSceneVariations';
+
 export interface TemplatePreset {
   id: string;
   templateId: string;
@@ -6,6 +8,9 @@ export interface TemplatePreset {
   createdAt: number;
   updatedAt: number;
   schemaVersion: 1;
+  builtIn?: boolean;
+  description?: string;
+  referenceUrl?: string;
 }
 
 interface PresetStorage {
@@ -14,6 +19,19 @@ interface PresetStorage {
 }
 
 const STORAGE_KEY = 'utavista.template-presets.v1';
+
+const BUILT_IN_PRESETS: TemplatePreset[] = kineticSceneVariations.map(variation => ({
+  id: variation.id,
+  templateId: 'kineticscenetemplate',
+  name: variation.name,
+  params: variation.params,
+  createdAt: 0,
+  updatedAt: 0,
+  schemaVersion: 1,
+  builtIn: true,
+  description: variation.description,
+  referenceUrl: variation.referenceUrl
+}));
 
 function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -36,9 +54,11 @@ function isPreset(value: unknown): value is TemplatePreset {
 /** テンプレート設定をアプリ横断で再利用するための永続プリセットストア。 */
 export class TemplatePresetService {
   static list(templateId: string): TemplatePreset[] {
-    return this.read().presets
+    const userPresets = this.read().presets
       .filter(preset => preset.templateId === templateId)
       .sort((a, b) => b.updatedAt - a.updatedAt);
+    const builtIns = BUILT_IN_PRESETS.filter(preset => preset.templateId === templateId);
+    return [...builtIns, ...userPresets];
   }
 
   static save(
@@ -72,6 +92,7 @@ export class TemplatePresetService {
   }
 
   static delete(presetId: string): void {
+    if (BUILT_IN_PRESETS.some(preset => preset.id === presetId)) return;
     const storage = this.read();
     storage.presets = storage.presets.filter(preset => preset.id !== presetId);
     this.write(storage);
@@ -96,4 +117,3 @@ export class TemplatePresetService {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
   }
 }
-

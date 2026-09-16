@@ -53,6 +53,25 @@
   gap: var(--space-xs);
 }
 
+.template-preset-description {
+  display: grid;
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-sm);
+  border-left: 3px solid var(--color-accent);
+  background: var(--bg-level-3);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+}
+
+.template-preset-description strong {
+  color: var(--text-primary);
+}
+
+.template-preset-description a {
+  color: var(--color-accent);
+}
+
 .template-preset-actions button {
   padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--border-prominent);
@@ -80,4 +99,3 @@
   color: var(--text-secondary);
   font-size: var(--text-small);
 }
-

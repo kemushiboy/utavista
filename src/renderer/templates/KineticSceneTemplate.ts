@@ -24,7 +24,9 @@ import {
   createScreenMotion,
   createSustain,
   sampleClip,
-  sceneCatalog
+  sceneCatalog,
+  TypographyEffects,
+  TypographyEffectParams
 } from '../motion';
 
 const TEXT_NAME = 'kinetic-scene-text';
@@ -44,10 +46,12 @@ function stringParam(params: Record<string, unknown>, name: string, fallback: st
  * すべての状態は nowMs と seed から直接評価され、フレーム履歴を持たない。
  */
 export class KineticSceneTemplate implements IAnimationTemplate {
+  private readonly typographyEffects = new TypographyEffects();
+
   readonly metadata: TemplateMetadata = {
     name: 'KineticSceneTemplate',
-    version: '1.0.0',
-    description: 'レイアウト・出現・継続・消失・画面モーションを自由に合成するシーンテンプレート',
+    version: '1.1.0',
+    description: 'レイアウト・基本モーション・6系統のタイポグラフィエフェクトを自由に合成するシーンテンプレート',
     license: 'GPL-3.0',
     originalAuthor: {
       name: 'UTAVISTA Development Team',
@@ -82,7 +86,31 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'motionIntensity', type: 'number', default: 1, min: 0, max: 3, step: 0.05, label: 'モーション強度' },
       { name: 'motionSeed', type: 'number', default: 2026, min: 0, max: 99999, step: 1, label: 'ランダムシード' },
       { name: 'entranceDuration', type: 'number', default: 520, min: 0, max: 2500, step: 20, label: '出現時間' },
-      { name: 'exitDuration', type: 'number', default: 520, min: 1, max: 2500, step: 20, label: '消失時間' }
+      { name: 'exitDuration', type: 'number', default: 520, min: 1, max: 2500, step: 20, label: '消失時間' },
+      { name: 'shuffleEnabled', type: 'boolean', default: false, label: '文字シャッフル' },
+      { name: 'shuffleCharset', type: 'string', default: '01#%&<>アイウエオXYZ', label: '置換文字セット' },
+      { name: 'shuffleRate', type: 'number', default: 50, min: 16, max: 400, step: 1, label: '置換間隔 (ms)' },
+      { name: 'shuffleDuration', type: 'number', default: 720, min: 50, max: 3000, step: 10, label: '収束時間 (ms)' },
+      { name: 'repetitionEnabled', type: 'boolean', default: false, label: '反復複製' },
+      { name: 'repetitionCount', type: 'number', default: 8, min: 1, max: 24, step: 1, label: '複製数' },
+      { name: 'repetitionSpread', type: 'number', default: 14, min: 0, max: 100, step: 1, label: '複製間隔' },
+      { name: 'repetitionDepth', type: 'number', default: 0.65, min: 0, max: 1, step: 0.05, label: '遠近減衰' },
+      { name: 'organicEnabled', type: 'boolean', default: false, label: '有機ディストーション' },
+      { name: 'organicAmplitude', type: 'number', default: 0.04, min: 0, max: 0.2, step: 0.005, label: '波形振幅' },
+      { name: 'organicFrequency', type: 'number', default: 3, min: 0.2, max: 12, step: 0.1, label: '波形周波数' },
+      { name: 'organicSpeed', type: 'number', default: 1, min: -5, max: 5, step: 0.1, label: '波形速度' },
+      { name: 'destructionEnabled', type: 'boolean', default: false, label: '弾性破壊' },
+      { name: 'destructionStrength', type: 'number', default: 1, min: 0, max: 3, step: 0.05, label: '破壊強度' },
+      { name: 'destructionSlices', type: 'number', default: 9, min: 2, max: 24, step: 1, label: '破壊スライス数' },
+      { name: 'destructionDuration', type: 'number', default: 900, min: 100, max: 4000, step: 20, label: '破壊・復元時間 (ms)' },
+      { name: 'emittersEnabled', type: 'boolean', default: false, label: '文字オブジェクト放出' },
+      { name: 'emitterStyle', type: 'string', default: 'particles', options: ['particles', 'bubbles', 'eyes', 'noise'], label: '放出スタイル' },
+      { name: 'emitterCount', type: 'number', default: 16, min: 1, max: 48, step: 1, label: '放出数' },
+      { name: 'emitterRadius', type: 'number', default: 130, min: 10, max: 500, step: 5, label: '放出半径' },
+      { name: 'surfaceEnabled', type: 'boolean', default: false, label: '文字曲面' },
+      { name: 'surfaceShape', type: 'string', default: 'ribbon', options: ['ribbon', 'cylinder', 'torus'], label: '曲面形状' },
+      { name: 'surfaceCurve', type: 'number', default: 0.14, min: -0.5, max: 0.5, step: 0.01, label: '曲率' },
+      { name: 'surfaceRepeat', type: 'number', default: 2, min: 1, max: 6, step: 1, label: 'UV反復数' }
     ];
   }
 
@@ -111,6 +139,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   }
 
   removeVisualElements(container: PIXI.Container): void {
+    this.typographyEffects.cleanup(container);
     container.position.set(0, 0);
     container.scale.set(1, 1);
     container.skew.set(0, 0);
@@ -201,6 +230,13 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         ? stringParam(params, 'activeTextColor', '#FFFFFF')
         : stringParam(params, 'completedTextColor', '#A8FF60');
     const textObject = this.ensureText(container, text, params, fontSize, color);
+    this.typographyEffects.update(
+      container,
+      textObject,
+      text,
+      this.resolveTypographyEffects(params),
+      { nowMs, startMs, seed, index, intensity }
+    );
     this.updateEchoes(container, textObject, params, nowMs, intensity);
     return true;
   }
@@ -330,6 +366,35 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       sustain: stringParam(params, 'sustainMotion', 'pulse') as SustainName,
       exit: stringParam(params, 'exitMotion', 'collapse') as ExitName,
       screen: stringParam(params, 'screenMotion', 'zoom') as ScreenMotionName
+    };
+  }
+
+  private resolveTypographyEffects(params: Record<string, unknown>): TypographyEffectParams {
+    return {
+      shuffleEnabled: params.shuffleEnabled === true,
+      shuffleCharset: stringParam(params, 'shuffleCharset', '01#%&<>アイウエオXYZ'),
+      shuffleRate: numberParam(params, 'shuffleRate', 50),
+      shuffleDuration: numberParam(params, 'shuffleDuration', 720),
+      repetitionEnabled: params.repetitionEnabled === true,
+      repetitionCount: numberParam(params, 'repetitionCount', 8),
+      repetitionSpread: numberParam(params, 'repetitionSpread', 14),
+      repetitionDepth: numberParam(params, 'repetitionDepth', 0.65),
+      organicEnabled: params.organicEnabled === true,
+      organicAmplitude: numberParam(params, 'organicAmplitude', 0.04),
+      organicFrequency: numberParam(params, 'organicFrequency', 3),
+      organicSpeed: numberParam(params, 'organicSpeed', 1),
+      destructionEnabled: params.destructionEnabled === true,
+      destructionStrength: numberParam(params, 'destructionStrength', 1),
+      destructionSlices: numberParam(params, 'destructionSlices', 9),
+      destructionDuration: numberParam(params, 'destructionDuration', 900),
+      emittersEnabled: params.emittersEnabled === true,
+      emitterStyle: stringParam(params, 'emitterStyle', 'particles') as TypographyEffectParams['emitterStyle'],
+      emitterCount: numberParam(params, 'emitterCount', 16),
+      emitterRadius: numberParam(params, 'emitterRadius', 130),
+      surfaceEnabled: params.surfaceEnabled === true,
+      surfaceShape: stringParam(params, 'surfaceShape', 'ribbon') as TypographyEffectParams['surfaceShape'],
+      surfaceCurve: numberParam(params, 'surfaceCurve', 0.14),
+      surfaceRepeat: numberParam(params, 'surfaceRepeat', 2)
     };
   }
 }
