@@ -23,6 +23,7 @@ import { ProjectFileData, AutoSaveData } from '../../types/UnifiedProjectData';
 import { OptimizedParameterUpdater } from './OptimizedParameterUpdater';
 import { BeatManager, BeatEventDetail } from '../services/BeatManager';
 import type { BeatMarker } from '../services/AudioAnalyzer';
+import { GlobalPostEffectConfig, GlobalPostEffectManager } from '../effects/GlobalPostEffectManager';
 
 export class Engine {
   // パラメータカテゴリ分類
@@ -67,6 +68,7 @@ export class Engine {
   audioFileName?: string; // 音楽ファイル名
   private currentAudioElement?: HTMLAudioElement;
   readonly beatManager = new BeatManager();
+  private postEffectManager!: GlobalPostEffectManager;
 
   // 方眼目盛りと座標表示用のオーバーレイ
   private gridOverlay?: GridOverlay;
@@ -114,7 +116,7 @@ export class Engine {
     containerId: string, 
     template: IAnimationTemplate,
     defaultParams: Partial<StandardParameters> = {},
-    templateId: string = 'fadeslidetext'
+    templateId: string = 'kineticscenetemplate'
   ) {
     // グローバル参照を設定（パーティクルシステムなどから時刻取得用）
     if (typeof window !== 'undefined') {
@@ -245,6 +247,10 @@ export class Engine {
 
     // ステージの原点を明示的に設定 (左上を(0, 0)にする)
     this.app.stage.position.set(0, 0);
+
+    // 背景・文字・装飾を合成した後のステージ全体へ共通Post FXを適用する。
+    this.postEffectManager = new GlobalPostEffectManager(this.app.stage);
+    this.postEffectManager.resize(this.app.screen);
 
     // 方眼目盛りオーバーレイを初期化
     this.gridOverlay = new GridOverlay(this.app);
@@ -822,6 +828,7 @@ export class Engine {
     
     // インスタンスマネージャーの更新
     this.instanceManager.update(this.currentTime);
+    this.postEffectManager.update(this.currentTime);
     
     // デバッグ情報の更新（スロットリング付き）
     const debugElapsed = now - this.lastDebugUpdateTime;
@@ -1639,6 +1646,8 @@ export class Engine {
       if (this.debugManager) {
         this.debugManager.destroy();
       }
+
+      this.postEffectManager?.destroy();
       
       // PIXI アプリケーションを破棄
       if (this.app) {
@@ -2073,6 +2082,17 @@ export class Engine {
       this.optimizedUpdater.setCurrentTime(timeMs);
     }
     this.instanceManager.update(timeMs);
+    this.postEffectManager.update(timeMs);
+  }
+
+  getPostEffectConfig(): GlobalPostEffectConfig {
+    return this.postEffectManager.getConfig();
+  }
+
+  updatePostEffectConfig(config: Partial<GlobalPostEffectConfig>): void {
+    this.postEffectManager.setConfig(config);
+    this.postEffectManager.update(this.currentTime);
+    this.app.render();
   }
 
   // ProjectStateManagerへのアクセサ
@@ -2801,6 +2821,7 @@ export class Engine {
     // PIXIアプリケーションをリサイズ
     if (this.app && this.app.renderer) {
       this.app.renderer.resize(width, height);
+      this.postEffectManager.resize(this.app.screen);
       
       // CSSスケーリングを再適用
       this.applyCSSScaling();
@@ -2986,6 +3007,7 @@ export class Engine {
         
         // 一時的にレンダラーのサイズを変更
         this.app.renderer.resize(outputWidth, outputHeight);
+        this.postEffectManager.resize(this.app.screen);
         
         // メインステージをレンダーテクスチャに描画
         this.app.renderer.render(this.app.stage, { renderTexture });
@@ -3006,6 +3028,7 @@ export class Engine {
         
         // レンダラーのサイズを元に戻す
         this.app.renderer.resize(currentWidth, currentHeight);
+        this.postEffectManager.resize(this.app.screen);
         
       } else {
         // 現在のサイズのままキャプチャ
@@ -4057,6 +4080,14 @@ export class Engine {
   public updatePhraseParameters(phraseId: string, params: Partial<StandardParameters>): void {
     // V2モード: 直接更新
     this.parameterManager.updateParameters(phraseId, params);
+  }
+
+  /** シーン設定プリセットをフレーズ・単語・文字の任意オブジェクトへ割り当てる。 */
+  public updateObjectParameters(objectId: string, params: Partial<StandardParameters>): void {
+    this.parameterManager.enableIndividualSetting(objectId);
+    this.parameterManager.updateParameters(objectId, params);
+    this.instanceManager.updateExistingInstances([objectId]);
+    this.instanceManager.update(this.currentTime);
   }
   
   /**

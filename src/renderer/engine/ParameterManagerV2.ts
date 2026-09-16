@@ -42,7 +42,7 @@ export class ParameterManagerV2 {
   private phraseIndividualSettings: Map<string, boolean> = new Map();
   
   // デフォルトテンプレートID
-  private defaultTemplateId: string = 'fadeslidetext';
+  private defaultTemplateId: string = 'kineticscenetemplate';
   
   // 変更通知用のコールバック
   private changeListeners: Map<string, (phraseId: string, params: CompleteParameters) => void> = new Map();
@@ -203,9 +203,12 @@ export class ParameterManagerV2 {
     value: unknown
   ): void {
     const phraseId = this.extractPhraseId(objectId);
-    const params = this.phraseParameters.get(phraseId);
+    let params = this.phraseParameters.get(phraseId);
     if (!params) {
-      throw new Error(`Phrase ${phraseId} not initialized for object ${objectId}`);
+      params = this.getParameters(objectId) as CompleteParameters;
+      delete (params as CompleteParameters & { templateId?: string }).templateId;
+      this.phraseParameters.set(phraseId, params);
+      this.phraseTemplates.set(phraseId, this.defaultTemplateId);
     }
     
     // パラメータを更新
@@ -228,10 +231,11 @@ export class ParameterManagerV2 {
     const phraseId = this.extractPhraseId(objectId);
     let params = this.phraseParameters.get(phraseId);
     if (!params) {
-      // フレーズが未初期化の場合は自動初期化
-      const templateId = this.getDefaultTemplateId() || 'fadeslidetext';
-      this.initializePhrase(phraseId, templateId);
-      params = this.phraseParameters.get(phraseId)!;
+      // オブジェクト固有設定は、親オブジェクトまたはグローバル設定をスナップショット化して開始する。
+      params = this.getParameters(objectId) as CompleteParameters;
+      delete (params as CompleteParameters & { templateId?: string }).templateId;
+      this.phraseParameters.set(phraseId, params);
+      this.phraseTemplates.set(phraseId, this.defaultTemplateId);
     }
     
     // 配列が渡された場合の緊急対応
@@ -296,13 +300,13 @@ export class ParameterManagerV2 {
     // フレーズIDかどうかを判定
     const phraseId = this.extractPhraseId(objectId);
     
-    const params = this.phraseParameters.get(phraseId);
+    const params = this.phraseParameters.get(phraseId) || this.getInheritedParameters(phraseId);
     if (!params) {
       // 未初期化の場合はデフォルトを返す
       console.warn(`ParameterManagerV2: Phrase ${phraseId} not initialized for object ${objectId}, returning defaults`);
       console.debug(`ParameterManagerV2: 抽出されたフレーズID: "${phraseId}", オリジナルオブジェクトID: "${objectId}"`);
       console.debug(`ParameterManagerV2: 現在初期化済みフレーズ:`, Array.from(this.phraseParameters.keys()));
-      return this.createDefaultParameters();
+      return { ...this.globalDefaults } as CompleteParameters & { templateId?: string };
     }
     
     // templateIdを追加して返す（個別設定の場合のみ）
@@ -317,39 +321,25 @@ export class ParameterManagerV2 {
   }
   
   /**
-   * オブジェクトIDからフレーズIDを抽出
+   * 旧API名を維持しつつ、現在は各オブジェクトIDをそのまま保存キーとして扱う。
    */
   extractPhraseId(objectId: string): string {
-    // 拡張形式の文字ID: phrase_X_word_Y_hZfW_char_N → phrase_X を抽出
-    const extendedCharPattern = /^(.+)_word_\d+_h\d+f\d+_char_\d+$/;
-    const extendedCharMatch = objectId.match(extendedCharPattern);
-    if (extendedCharMatch) {
-      return extendedCharMatch[1]; // フレーズIDを返す
-    }
-    
-    // 拡張形式の単語ID: phrase_X_word_Y_hZfW → phrase_X を抽出
-    const extendedWordPattern = /^(.+)_word_\d+_h\d+f\d+$/;
-    const extendedWordMatch = objectId.match(extendedWordPattern);
-    if (extendedWordMatch) {
-      return extendedWordMatch[1]; // フレーズIDを返す
-    }
-    
-    // 従来形式の文字ID: 任意の文字列_word_数字_char_数字 → フレーズIDを抽出
-    const charPattern = /^(.+)_word_\d+_char_\d+$/;
-    const charMatch = objectId.match(charPattern);
-    if (charMatch) {
-      return charMatch[1]; // フレーズIDを返す
-    }
-    
-    // 従来形式の単語ID: 任意の文字列_word_数字 → フレーズIDを抽出
-    const wordPattern = /^(.+)_word_\d+$/;
-    const wordMatch = objectId.match(wordPattern);
-    if (wordMatch) {
-      return wordMatch[1]; // フレーズIDを返す
-    }
-    
-    // フレーズIDまたは不明な形式の場合はそのまま返す
     return objectId;
+  }
+
+  private getInheritedParameters(objectId: string): CompleteParameters | undefined {
+    const parentId = this.getParentObjectId(objectId);
+    if (!parentId) return undefined;
+    const directParent = this.phraseParameters.get(parentId);
+    if (directParent) return directParent;
+    return this.getInheritedParameters(parentId);
+  }
+
+  private getParentObjectId(objectId: string): string | null {
+    const charMatch = objectId.match(/^(.+)_char_(?:\d+|.+)$/);
+    if (charMatch) return charMatch[1];
+    const wordMatch = objectId.match(/^(.+)_word_(?:\d+|.+)$/);
+    return wordMatch ? wordMatch[1] : null;
   }
   
   /**
@@ -859,10 +849,11 @@ export class ParameterManagerV2 {
   enableIndividualSetting(objectId: string): void {
     const phraseId = this.extractPhraseId(objectId);
     
-    // フレーズが初期化されていない場合は自動初期化
+    // 未初期化オブジェクトは、親オブジェクトから継承した現在値を複製して開始する。
     if (!this.phraseParameters.has(phraseId)) {
-      const templateId = this.getDefaultTemplateId() || 'fadeslidetext';
-      this.initializePhrase(phraseId, templateId);
+      const inherited = this.getInheritedParameters(phraseId) || this.globalDefaults;
+      this.phraseParameters.set(phraseId, { ...inherited });
+      this.phraseTemplates.set(phraseId, this.getDefaultTemplateId() || 'kineticscenetemplate');
     }
     
     this.phraseIndividualSettings.set(phraseId, true);
@@ -915,21 +906,10 @@ export class ParameterManagerV2 {
       // 個別設定を無効化
       this.phraseIndividualSettings.set(phraseId, false);
       
-      // パラメータを正しい優先順位でリセット
-      if (this.phraseParameters.has(phraseId)) {
-        const templateId = this.phraseTemplates.get(phraseId) || this.defaultTemplateId;
-        const templateDefaults = this.getTemplateDefaults(templateId);
-        
-        // 正しい優先順位でリセット
-        const resetParams = { ...this.createDefaultParameters() }; // 1. システムデフォルト
-        Object.assign(resetParams, templateDefaults); // 2. テンプレート推奨値
-        Object.assign(resetParams, this.globalDefaults); // 3. ユーザーグローバル設定（最優先）
-        
-        this.phraseParameters.set(phraseId, resetParams);
-        
-        // パラメータ変更を通知
-        this.notifyParameterChange(phraseId, resetParams);
-      }
+      // 直接値を削除すると、次回取得時に親オブジェクト→グローバルの順で再び継承される。
+      this.phraseParameters.delete(phraseId);
+      this.phraseTemplates.delete(phraseId);
+      this.notifyParameterChange(phraseId, this.getParameters(phraseId));
       
       // 個別設定変更を通知
       this.notifyIndividualSettingChange(phraseId, false);

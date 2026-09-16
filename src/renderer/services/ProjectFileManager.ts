@@ -101,7 +101,7 @@ export class ProjectFileManager {
     const lyricsWithIndices = calculateCharacterIndices(projectData.lyricsData);
     
     // グローバルテンプレートIDを取得（後方互換性対応）
-    const globalTemplateId = projectData.globalTemplateId || projectData.defaultTemplateId || 'FadeSlideText';
+    const globalTemplateId = 'kineticscenetemplate';
     
     // プロジェクト状態を復元
     const state: Partial<ProjectState> = {
@@ -230,7 +230,7 @@ export class ProjectFileManager {
       this.cleanupLegacyParams(lyricsWithIndices);
       
       // グローバルテンプレートIDを取得（後方互換性対応）
-      const globalTemplateId = projectData.globalTemplateId || projectData.defaultTemplateId || 'FadeSlideText';
+      const globalTemplateId = 'kineticscenetemplate';
       
       // プロジェクト状態を復元
       const state: Partial<ProjectState> = {
@@ -560,7 +560,7 @@ export class ProjectFileManager {
     // テンプレートIDのデフォルト設定
     if (!data.globalTemplateId && !data.defaultTemplateId) {
       console.warn('ProjectFileManager: テンプレートIDがありません。デフォルト値を設定します');
-      data.globalTemplateId = 'fadeslidetext';
+      data.globalTemplateId = 'kineticscenetemplate';
     }
     
     // 音楽ファイル情報のデフォルト設定

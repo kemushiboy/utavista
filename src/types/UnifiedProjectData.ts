@@ -224,9 +224,9 @@ export class ProjectDataNormalizer {
       globalParams: data.globalParams || {},
       objectParams: data.objectParams || {},
       individualSettingsEnabled: data.individualSettingsEnabled || [],
-      templateId: data.templateId || 'fadeslidetext',
+      templateId: 'kineticscenetemplate',
       templateParams: data.templateParams || {},
-      templateAssignments: data.templateAssignments || {},
+      templateAssignments: {},
       stageConfig: data.stageConfig || {
         aspectRatio: '16:9' as const,
         orientation: 'landscape' as const

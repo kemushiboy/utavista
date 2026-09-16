@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import PreviewArea from './layout/PreviewArea';
-import TemplateTab from './layout/TemplateTab';
+import SceneSettingsTab from './layout/SceneSettingsTab';
 import PlayerPanel from './layout/PlayerPanel';
 import TimelinePanel from './layout/TimelinePanel';
 import ContentTab from './layout/ContentTab';
@@ -63,13 +63,10 @@ const NewLayout: React.FC<NewLayoutProps> = ({
   onPause,
   onReset,
   onSeek,
-  onTemplateChange,
   isPlaying,
   currentTime,
   totalDuration,
-  selectedTemplate,
   engine, // propsからengineを受け取る
-  template, // propsからtemplateを受け取る
   debugInfo,
   timingDebugInfo
 }) => {
@@ -290,15 +287,9 @@ const NewLayout: React.FC<NewLayoutProps> = ({
           </div>
           <div className="sidepanel-area">
             {/* タブ切り替え実装：5タブ構成 */}
-            <SidebarTabs labels={['テンプレート', 'コンテンツ', 'プロジェクト', '設定', 'デバッグ']}>
+            <SidebarTabs labels={['シーン', 'コンテンツ', 'プロジェクト', '設定', 'デバッグ']}>
               {[
-                <TemplateTab
-                  key="template-tab"
-                  selectedTemplate={selectedTemplate}
-                  onTemplateChange={onTemplateChange}
-                  engine={engine}
-                  template={template}
-                />,
+                <SceneSettingsTab key="scene-settings-tab" engine={engine} />,
                 <ContentTab 
                   key="content-tab" 
                   engine={engine} 

@@ -53,7 +53,7 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(60000); // デフォルト60秒（エンジンから実際の値を取得する）
-  const [selectedTemplate, setSelectedTemplate] = useState('glitchtextprimitive'); // テンプレート選択状態
+  const [selectedTemplate, setSelectedTemplate] = useState('kineticscenetemplate'); // 内部描画方式は固定
   const [engineReady, setEngineReady] = useState(false); // エンジン初期化状態を追加
   const [fontServiceReady, setFontServiceReady] = useState(false); // FontService初期化状態を追加
   const [currentTemplate, setCurrentTemplate] = useState<IAnimationTemplate | null>(null); // 現在のテンプレートを状態として保持
