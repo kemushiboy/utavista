@@ -67,6 +67,7 @@ const NewLayout: React.FC<NewLayoutProps> = ({
   currentTime,
   totalDuration,
   engine, // propsからengineを受け取る
+  template, // タイムライン描画では固定コンポーザーの参照を使用する
   debugInfo,
   timingDebugInfo
 }) => {
