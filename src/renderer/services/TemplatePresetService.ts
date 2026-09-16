@@ -1,4 +1,5 @@
 import { kineticSceneVariations } from '../data/kineticSceneVariations';
+import { KineticSceneTemplate } from '../templates/KineticSceneTemplate';
 
 export interface TemplatePreset {
   id: string;
@@ -20,7 +21,23 @@ interface PresetStorage {
 
 const STORAGE_KEY = 'utavista.template-presets.v1';
 
-const BUILT_IN_PRESETS: TemplatePreset[] = kineticSceneVariations.map(variation => ({
+const kineticSceneDefaults = Object.fromEntries(
+  new KineticSceneTemplate().getParameterConfig().map(parameter => [parameter.name, parameter.default])
+);
+
+const DEFAULT_PRESET: TemplatePreset = {
+  id: 'builtin-default-scene',
+  templateId: 'kineticscenetemplate',
+  name: '00 初期設定',
+  params: kineticSceneDefaults,
+  createdAt: 0,
+  updatedAt: 0,
+  schemaVersion: 1,
+  builtIn: true,
+  description: 'キネティック・シーン・コンポーザーの初期設定へ戻します'
+};
+
+const BUILT_IN_PRESETS: TemplatePreset[] = [DEFAULT_PRESET, ...kineticSceneVariations.map(variation => ({
   id: variation.id,
   templateId: 'kineticscenetemplate',
   name: variation.name,
@@ -31,7 +48,7 @@ const BUILT_IN_PRESETS: TemplatePreset[] = kineticSceneVariations.map(variation 
   builtIn: true,
   description: variation.description,
   referenceUrl: variation.referenceUrl
-}));
+}))];
 
 function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {

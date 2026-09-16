@@ -104,10 +104,22 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
         ? '文字の親単語'
         : 'オブジェクト';
 
+  const presetParams = mode === 'global' ? globalParams : objectParams;
+  const applyPreset = mode === 'global' ? applyGlobalParams : applyObjectParams;
+  const canEditPreset = mode === 'global' || targetIds.length > 0;
+
   return (
     <div className="template-tab scene-settings-tab">
       <h2>シーン設定</h2>
-      <p>描画方式はキネティック・シーン・コンポーザーに固定されています。</p>
+
+      {canEditPreset && (
+        <TemplatePresetPanel
+          templateId={FIXED_TEMPLATE_ID}
+          params={presetParams}
+          paramConfig={paramConfig}
+          onApply={applyPreset}
+        />
+      )}
 
       <div className="editor-mode-switch">
         <div className="switch-container">
@@ -130,12 +142,6 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
             <h3>基本シーン設定</h3>
             <p>個別プリセットがないオブジェクトへ継承されます。</p>
             <ParamEditor params={globalParams} paramConfig={paramConfig} onChange={applyGlobalParams} />
-            <TemplatePresetPanel
-              templateId={FIXED_TEMPLATE_ID}
-              params={globalParams}
-              paramConfig={paramConfig}
-              onApply={applyGlobalParams}
-            />
           </section>
           <PostEffectPanel engine={engine} />
         </>
@@ -150,12 +156,6 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
             個別設定を解除して親設定を継承
           </button>
           <ParamEditor params={objectParams} paramConfig={paramConfig} onChange={applyObjectParams} />
-          <TemplatePresetPanel
-            templateId={FIXED_TEMPLATE_ID}
-            params={objectParams}
-            paramConfig={paramConfig}
-            onApply={applyObjectParams}
-          />
         </section>
       )}
 

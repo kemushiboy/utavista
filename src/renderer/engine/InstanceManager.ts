@@ -483,8 +483,13 @@ export class InstanceManager {
       let wordProcessed = 0;
       let wordActive = 0;
 
-      // まず文字レベルの更新
+      // KineticSceneTemplateは単語コンテナ内で文字タイミングをまとめて描画するため、
+      // 文字インスタンス側の重複更新を行わない。
       this.charInstances.forEach(instance => {
+        if (instance.template.metadata?.name === 'KineticSceneTemplate') {
+          instance.container.visible = false;
+          return;
+        }
         if (this.isInstanceInTimeRange(instance, nowMs, maxHeadTime, maxTailTime)) {
           instance.update(nowMs);
           this.activeInstances.add(instance.id);

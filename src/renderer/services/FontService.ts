@@ -79,13 +79,14 @@ export class FontService {
       );
 
 
-      // Electronネイティブ：全システムフォントを@font-faceとして登録
-      await this.loadAllSystemFonts();
-
-      // ピックアップフォント設定を読み込み
-      this.loadPickedFonts();
-
+      // 一覧は即時に利用可能にし、フォントファイル自体は選択時に自動ロードする。
+      // 全件の読み込み完了を待たないことで、エンジンと再生UIをブロックしない。
+      await FontLoader.initialize();
+      this.validatedFonts = [...this.systemFonts];
       this.initialized = true;
+
+      // 初期描画で使用する標準フォントだけを先に確保する。
+      await this.ensureFontLoaded('Arial');
 
     } catch (error) {
       console.error('[FontService] システムフォント取得エラー:', error);
@@ -145,17 +146,7 @@ export class FontService {
       return [];
     }
 
-    // ピックアップフォント設定を確認
-    const showAllFonts = this.getShowAllFonts();
-    
-    let fontsToShow: string[];
-    if (showAllFonts || this.pickedFonts.size === 0) {
-      fontsToShow = this.validatedFonts;
-    } else {
-      fontsToShow = this.validatedFonts.filter(font => this.pickedFonts.has(font));
-    }
-
-    return fontsToShow.map(fontFamily => ({
+    return this.validatedFonts.map(fontFamily => ({
       value: fontFamily,
       label: fontFamily
     }));
@@ -181,23 +172,12 @@ export class FontService {
 
     const fontFamilies: FontFamily[] = [];
     
-    // Apply the same filtering logic as getAvailableFonts()
-    const showAllFonts = this.getShowAllFonts();
-    
-    let fontsToShow: string[];
-    if (showAllFonts || this.pickedFonts.size === 0) {
-      fontsToShow = this.validatedFonts;
-    } else {
-      fontsToShow = this.validatedFonts.filter(font => this.pickedFonts.has(font));
-    }
-    
-    if (fontsToShow.length === 0) {
+    if (this.validatedFonts.length === 0) {
       console.warn('[FontService] No fonts available after filtering');
       return [];
     }
     
-    // 検証済みフォントのみを対象とする
-    fontsToShow.forEach(fontFamily => {
+    this.validatedFonts.forEach(fontFamily => {
       const fontInfos = this.fontFamilyMap.get(fontFamily);
       if (fontInfos && fontInfos.length > 0) {
         const styles: FontStyle[] = fontInfos.map(font => ({
@@ -330,18 +310,9 @@ export class FontService {
    * @param selectedFonts 選択されたフォント一覧
    * @param showAllFonts 全フォント表示フラグ
    */
-  static updatePickedFonts(selectedFonts: string[], showAllFonts: boolean): void {
+  static updatePickedFonts(selectedFonts: string[], _showAllFonts: boolean): void {
+    // 互換API。現在はPCにインストール済みの全フォントを常に表示する。
     this.pickedFonts = new Set(selectedFonts);
-    
-    try {
-      const settings = {
-        selectedFonts: selectedFonts,
-        showAllFonts: showAllFonts
-      };
-      localStorage.setItem('fontPickupSettings', JSON.stringify(settings));
-    } catch (error) {
-      console.error('[FontService] ピックアップフォント設定の保存に失敗しました:', error);
-    }
   }
 
   /**
@@ -350,8 +321,8 @@ export class FontService {
    */
   static getPickedFontsSettings(): { selectedFonts: string[], showAllFonts: boolean } {
     return {
-      selectedFonts: Array.from(this.pickedFonts),
-      showAllFonts: this.getShowAllFonts()
+      selectedFonts: [...this.validatedFonts],
+      showAllFonts: true
     };
   }
 
@@ -359,7 +330,7 @@ export class FontService {
    * フォント設定を再読み込み（設定変更時に呼び出し）
    */
   static reloadFontSettings(): void {
-    this.loadPickedFonts();
+    // 全システムフォント自動利用へ移行したため、手動設定の再読込は不要。
   }
 
   /**
@@ -464,31 +435,56 @@ export class FontService {
       return;
     }
 
-    // 既に検証済みフォントに含まれている場合は即座に解決
-    if (this.validatedFonts.includes(fontFamily)) {
-      return;
-    }
-
-    // フォントが利用可能かチェック
-    if (!this.systemFonts.includes(fontFamily)) {
+    const resolvedFamily = this.resolveFontFamily(fontFamily);
+    if (!resolvedFamily) {
       console.warn(`[FontService] フォント ${fontFamily} はシステムに存在しません`);
       return;
     }
-
-
+    if (FontLoader.isLoaded(resolvedFamily)) {
+      return;
+    }
     try {
-      // フォントを読み込み
-      await FontLoader.loadSystemFont(fontFamily);
-      
-      // 検証済みフォントリストに追加
-      if (!this.validatedFonts.includes(fontFamily)) {
-        this.validatedFonts.push(fontFamily);
+      const variants = this.fontFamilyMap.get(resolvedFamily) || [];
+      const preferred = variants.find(font => font.style === 'Regular' && font.path)
+        || variants.find(font => font.path);
+      // Web-safeフォントなどパスを持たないものはChromiumのネイティブ解決に任せる。
+      if (preferred) {
+        const loaded = await FontLoader.loadSystemFont(preferred);
+        if (!loaded) {
+          throw new Error(`フォントファイルを読み込めませんでした: ${preferred.path}`);
+        }
       }
-      
     } catch (error) {
-      console.error(`[FontService] フォント ${fontFamily} の読み込みに失敗しました:`, error);
+      console.error(`[FontService] フォント ${resolvedFamily} の読み込みに失敗しました:`, error);
       throw error;
     }
+  }
+
+  /**
+   * 旧プロジェクトに保存されたフルネームを、描画に使うファミリー名へ変換する。
+   */
+  static normalizeFontFamily(fontName: string): string {
+    return this.resolveFontFamily(fontName) || fontName;
+  }
+
+  private static resolveFontFamily(fontName: string): string | undefined {
+    if (this.fontFamilyMap.has(fontName)) return fontName;
+    const normalizedRequestedName = this.normalizeComparableFontName(fontName);
+    for (const [family, variants] of this.fontFamilyMap.entries()) {
+      if (variants.some(font => font.fullName === fontName)) return family;
+      if (this.normalizeComparableFontName(family) === normalizedRequestedName) return family;
+      if (variants.some(font => this.normalizeComparableFontName(font.fullName) === normalizedRequestedName)) {
+        return family;
+      }
+    }
+    return this.systemFonts.includes(fontName) ? fontName : undefined;
+  }
+
+  private static normalizeComparableFontName(fontName: string): string {
+    return fontName
+      .replace(/[-_\s]*VariableFont[-_\s]*(?:[A-Za-z]+(?:[,\s_-]+[A-Za-z]+)*)?$/i, '')
+      .replace(/[-_\s]+/g, '')
+      .toLowerCase();
   }
 }
 

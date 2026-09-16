@@ -63,6 +63,7 @@ function App() {
   const [timingDebugInfo, setTimingDebugInfo] = useState<TimingDebugInfo>({});// タイミングデバッグ情報
 
   const engineRef = useRef<Engine | null>(null);
+  const engineInitializingRef = useRef(false);
   const animationFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
   const frameCountRef = useRef<number>(0);
@@ -141,6 +142,11 @@ function App() {
     const handleAudioEnded = (event: CustomEvent) => {
       // クロージャ問題を回避するため、isPlayingをチェックせずに常に停止状態に設定
       setIsPlaying(false);
+    };
+
+    const handleAudioPlaybackError = () => {
+      // 音声デバイス側の開始失敗だけで映像プレビューまで停止扱いにしない。
+      setIsPlaying(Boolean(engineRef.current?.isRunning));
     };
     
     // キーボードショートカットのハンドラ
@@ -224,6 +230,7 @@ function App() {
     window.addEventListener('engine-seeked', handleEngineSeek as EventListener);
     window.addEventListener('timeline-ended', handleTimelineEnded as EventListener);
     window.addEventListener('audio-ended', handleAudioEnded as EventListener);
+    window.addEventListener('audio-playback-error', handleAudioPlaybackError as EventListener);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('templateRegistryChanged', handleTemplateRegistryChanged as EventListener);
 
@@ -237,6 +244,7 @@ function App() {
       window.removeEventListener('engine-seeked', handleEngineSeek as EventListener);
       window.removeEventListener('timeline-ended', handleTimelineEnded as EventListener);
       window.removeEventListener('audio-ended', handleAudioEnded as EventListener);
+      window.removeEventListener('audio-playback-error', handleAudioPlaybackError as EventListener);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('templateRegistryChanged', handleTemplateRegistryChanged as EventListener);
     };
@@ -286,28 +294,32 @@ function App() {
       return;
     }
     
-    // 初回のみエンジンを初期化
-    if (!engineRef.current) {
-      setEngineReady(false);
-      
-      // canvasContainer要素が存在することを確認してからエンジンを初期化
-      // setTimeout で DOM 更新後に実行することを保証
-      setTimeout(() => {
-        try {
-          const canvasElement = document.getElementById('canvasContainer');
-          if (canvasElement) {
-            initEngine();
-          } else {
-            console.error("canvasContainer要素が見つかりません。エンジン初期化をスキップします。");
-            // エラー状態を通知
-            setEngineReady(false);
-          }
-        } catch (error) {
-          console.error("エンジン初期化エラー:", error);
+    if (engineRef.current || engineInitializingRef.current) return;
+
+    setEngineReady(false);
+    let cancelled = false;
+
+    // DOM反映後に初期化する。StrictModeの再評価時は予約を必ず取り消す。
+    const initializationTimer = window.setTimeout(() => {
+      if (cancelled || engineRef.current || engineInitializingRef.current) return;
+      try {
+        const canvasElement = document.getElementById('canvasContainer');
+        if (canvasElement) {
+          void initEngine();
+        } else {
+          console.error("canvasContainer要素が見つかりません。エンジン初期化をスキップします。");
           setEngineReady(false);
         }
-      }, 100); // 100msの遅延を設定
-    }
+      } catch (error) {
+        console.error("エンジン初期化エラー:", error);
+        setEngineReady(false);
+      }
+    }, 100);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initializationTimer);
+    };
   }, [fontServiceReady]); // FontService初期化完了後に実行
   
   // テンプレート変更の処理（エンジンを再初期化せずテンプレートのみ変更）
@@ -454,10 +466,14 @@ function App() {
         console.error("Engine cleanup error:", error);
       }
     }
+    engineInitializingRef.current = false;
   };
 
   // エンジン初期化
   const initEngine = async () => {
+    if (engineRef.current || engineInitializingRef.current) return;
+    engineInitializingRef.current = true;
+
     try {
       // テンプレートレジストリから動的にテンプレートを取得
       let template = getTemplateById(selectedTemplate);
@@ -632,6 +648,8 @@ function App() {
     } catch (error) {
       console.error("エンジン初期化エラー:", error);
       setEngineReady(false);
+    } finally {
+      engineInitializingRef.current = false;
     }
   };
 

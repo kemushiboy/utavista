@@ -146,9 +146,15 @@ class FontManager {
   private parseFontFile(fileName: string, fullPath: string): FontInfo | null {
     try {
       const baseName = path.basename(fileName, path.extname(fileName));
+      // Google Fonts等の可変フォント名に付く技術的な接尾辞は
+      // UI上のファミリー名にもCSS aliasにも含めない。
+      const nameWithoutVariableSuffix = baseName.replace(
+        /[-_\s]*VariableFont[-_\s]*(?:[A-Za-z]+(?:[,\s_-]+[A-Za-z]+)*)?$/i,
+        ''
+      );
       
       // Extract font family from filename
-      let family = baseName;
+      let family = nameWithoutVariableSuffix || baseName;
       let style = 'Regular';
       let weight = 'normal';
 

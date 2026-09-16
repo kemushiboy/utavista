@@ -1,6 +1,7 @@
 import * as PIXI from 'pixi.js';
 import type {
   AnimationPhase,
+  CharUnit,
   HierarchyType,
   IAnimationTemplate,
   ParameterConfig,
@@ -30,6 +31,8 @@ import {
 } from '../motion';
 
 const TEXT_NAME = 'kinetic-scene-text';
+const CHAR_GROUP_NAME = 'kinetic-scene-char-group';
+const CHAR_NAME_PREFIX = 'kinetic-scene-char-';
 
 function numberParam(params: Record<string, unknown>, name: string, fallback: number): number {
   const value = params[name];
@@ -47,6 +50,7 @@ function stringParam(params: Record<string, unknown>, name: string, fallback: st
  */
 export class KineticSceneTemplate implements IAnimationTemplate {
   private readonly typographyEffects = new TypographyEffects();
+  private readonly textWidthCache = new Map<string, number>();
 
   readonly metadata: TemplateMetadata = {
     name: 'KineticSceneTemplate',
@@ -195,8 +199,10 @@ export class KineticSceneTemplate implements IAnimationTemplate {
 
     const spacing = numberParam(params, 'charSpacing', 0.9);
     const layout = scene.layout === 'center'
-      ? this.calculateCenteredWordLayout(params, index, fontSize, spacing)
-      : calculateLayout(scene.layout, { ...context, width, height, fontSize, spacing: spacing * 2.2 });
+      ? this.calculateCenteredWordLayout(params, index, fontSize, spacing, width)
+      : scene.layout === 'fill'
+        ? this.calculateFillWordLayout(params, index, total, fontSize, spacing, width, height)
+        : calculateLayout(scene.layout, { ...context, width, height, fontSize, spacing: spacing * 2.2 });
 
     const entranceDuration = numberParam(params, 'entranceDuration', 520);
     const exitDuration = numberParam(params, 'exitDuration', 520);
@@ -237,6 +243,18 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       this.resolveTypographyEffects(params),
       { nowMs, startMs, seed, index, intensity }
     );
+    this.updateCharacterText(
+      container,
+      text,
+      textObject.text,
+      params,
+      fontSize,
+      nowMs,
+      startMs,
+      endMs
+    );
+    // 本文は文字単位のTextで描画する。単語Textは複製・破壊などの効果生成源としてのみ保持する。
+    textObject.renderable = false;
     this.updateEchoes(container, textObject, params, nowMs, intensity);
     return true;
   }
@@ -245,23 +263,193 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     params: Record<string, unknown>,
     index: number,
     fontSize: number,
-    spacing: number
+    spacing: number,
+    stageWidth: number
   ): { x: number; y: number; rotation: number; scale: number } {
     const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
-    const widths = words.map(word => Math.max(fontSize * 0.7, (word.word?.length || 1) * fontSize * 0.62));
+    const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
+    const widths = words.map(word => Math.max(
+      fontSize * 0.5,
+      Array.from(word.word || ' ').reduce(
+        (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize),
+        0
+      )
+    ));
     if (widths.length === 0 || index >= widths.length) {
       return { x: (index - (Math.max(1, numberParam(params, 'totalWords', 1)) - 1) / 2) * fontSize * 2, y: 0, rotation: 0, scale: 1 };
     }
 
-    const gap = fontSize * 0.32 * spacing;
-    const totalWidth = widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, widths.length - 1);
-    const precedingWidth = widths.slice(0, index).reduce((sum, width) => sum + width, 0) + gap * index;
+    const gap = fontSize * 0.38 * spacing;
+    const naturalWidth = widths.reduce((sum, wordWidth) => sum + wordWidth, 0)
+      + gap * Math.max(0, widths.length - 1);
+    const scale = Math.min(1, (stageWidth * 0.88) / Math.max(1, naturalWidth));
+    const precedingWidth = widths.slice(0, index).reduce((sum, wordWidth) => sum + wordWidth, 0) + gap * index;
     return {
-      x: -totalWidth / 2 + precedingWidth + widths[index] / 2,
+      x: (-naturalWidth / 2 + precedingWidth + widths[index] / 2) * scale,
       y: 0,
       rotation: 0,
-      scale: 1
+      scale
     };
+  }
+
+  /**
+   * 画面充填レイアウト。最長単語の実測幅を基準に共通縮尺を決め、
+   * シャッフル中も隣のセルへ文字がはみ出さない余白を確保する。
+   */
+  private calculateFillWordLayout(
+    params: Record<string, unknown>,
+    index: number,
+    total: number,
+    fontSize: number,
+    spacing: number,
+    stageWidth: number,
+    stageHeight: number
+  ): { x: number; y: number; rotation: number; scale: number } {
+    const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
+    const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
+    const wordWidths = Array.from({ length: total }, (_, wordIndex) => {
+      const text = words[wordIndex]?.word || '　';
+      return Math.max(
+        fontSize * 0.5,
+        Array.from(text).reduce(
+          (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize),
+          0
+        )
+      );
+    });
+
+    const columns = Math.max(1, Math.ceil(Math.sqrt(total * (stageWidth / Math.max(stageHeight, 1)))));
+    const rows = Math.max(1, Math.ceil(total / columns));
+    const cellWidth = stageWidth * 0.88 / columns;
+    const cellHeight = stageHeight * 0.76 / rows;
+    const longestWordWidth = Math.max(fontSize, ...wordWidths);
+    const spacingPadding = fontSize * 0.16 * Math.max(0.35, spacing);
+    const availableWidth = Math.max(fontSize * 0.4, cellWidth * 0.82 - spacingPadding);
+    const scale = Math.min(
+      1.15,
+      availableWidth / longestWordWidth,
+      cellHeight * 0.68 / Math.max(fontSize, 1)
+    );
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+
+    return {
+      x: (column - (columns - 1) / 2) * cellWidth,
+      y: (row - (rows - 1) / 2) * cellHeight,
+      rotation: 0,
+      scale: Math.max(0.2, scale)
+    };
+  }
+
+  private updateCharacterText(
+    container: PIXI.Container,
+    originalText: string,
+    displayText: string,
+    params: Record<string, unknown>,
+    fontSize: number,
+    nowMs: number,
+    wordStartMs: number,
+    wordEndMs: number
+  ): void {
+    let group = container.children.find(child => child.name === CHAR_GROUP_NAME) as PIXI.Container | undefined;
+    if (!group) {
+      group = new PIXI.Container();
+      group.name = CHAR_GROUP_NAME;
+      container.addChild(group);
+    }
+
+    const originalCharacters = Array.from(originalText);
+    const displayCharacters = Array.from(displayText);
+    const characterTimings = Array.isArray(params.chars) ? params.chars as CharUnit[] : [];
+    const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
+    const waitingColor = stringParam(params, 'textColor', '#F3F0E8');
+    const activeColor = stringParam(params, 'activeTextColor', '#FFFFFF');
+    const completedColor = stringParam(params, 'completedTextColor', '#A8FF60');
+    const characterCount = Math.max(1, originalCharacters.length);
+    const fallbackDuration = Math.max(1, wordEndMs - wordStartMs) / characterCount;
+    const widths: number[] = [];
+
+    originalCharacters.forEach((character, characterIndex) => {
+      const timing = characterTimings[characterIndex];
+      const charStartMs = typeof timing?.start === 'number'
+        ? timing.start
+        : wordStartMs + fallbackDuration * characterIndex;
+      const charEndMs = typeof timing?.end === 'number'
+        ? timing.end
+        : wordStartMs + fallbackDuration * (characterIndex + 1);
+      const color = nowMs < charStartMs
+        ? waitingColor
+        : nowMs <= charEndMs
+          ? activeColor
+          : completedColor;
+      const visibleCharacter = displayCharacters[characterIndex] ?? character;
+      const signature = `${visibleCharacter}|${fontFamily}|${fontSize}|${color}`;
+      let characterText = group!.children.find(
+        child => child.name === `${CHAR_NAME_PREFIX}${characterIndex}`
+      ) as PIXI.Text | undefined;
+
+      if (!characterText) {
+        const style = this.createCharacterStyle(fontFamily, fontSize, color);
+        characterText = new PIXI.Text(visibleCharacter, style);
+        characterText.name = `${CHAR_NAME_PREFIX}${characterIndex}`;
+        characterText.anchor.set(0.5);
+        (characterText as PIXI.Text & { __kineticSignature?: string }).__kineticSignature = signature;
+        group!.addChild(characterText);
+      } else if ((characterText as PIXI.Text & { __kineticSignature?: string }).__kineticSignature !== signature) {
+        characterText.text = visibleCharacter;
+        characterText.style = this.createCharacterStyle(fontFamily, fontSize, color);
+        (characterText as PIXI.Text & { __kineticSignature?: string }).__kineticSignature = signature;
+      }
+
+      widths.push(this.measureTextWidth(character, fontFamily, fontSize));
+    });
+
+    group.children
+      .filter(child => child.name?.startsWith(CHAR_NAME_PREFIX))
+      .slice(originalCharacters.length)
+      .forEach(child => {
+        group!.removeChild(child);
+        child.destroy();
+      });
+
+    const totalWidth = widths.reduce((sum, characterWidth) => sum + characterWidth, 0);
+    let cursorX = -totalWidth / 2;
+    widths.forEach((characterWidth, characterIndex) => {
+      const characterText = group!.children.find(
+        child => child.name === `${CHAR_NAME_PREFIX}${characterIndex}`
+      ) as PIXI.Text | undefined;
+      if (characterText) characterText.position.set(cursorX + characterWidth / 2, 0);
+      cursorX += characterWidth;
+    });
+  }
+
+  private createCharacterStyle(fontFamily: string, fontSize: number, color: string): PIXI.TextStyle {
+    return TextStyleFactory.createTextStyle({
+      fontFamily,
+      fontSize,
+      fill: color,
+      align: 'center',
+      fontWeight: '700',
+      paddingMultiplier: 0.2,
+      minPadding: 10
+    });
+  }
+
+  private measureTextWidth(text: string, fontFamily: string, fontSize: number): number {
+    const key = `${fontFamily}|${fontSize}|700|${text}`;
+    const cached = this.textWidthCache.get(key);
+    if (cached !== undefined) return cached;
+    const style = TextStyleFactory.createTextStyle({
+      fontFamily,
+      fontSize,
+      fill: '#FFFFFF',
+      fontWeight: '700',
+      paddingMultiplier: 0,
+      minPadding: 0
+    });
+    const width = Math.max(0, PIXI.TextMetrics.measureText(text, style).width);
+    this.textWidthCache.set(key, width);
+    return width;
   }
 
   private ensureText(
@@ -272,7 +460,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     color: string
   ): PIXI.Text {
     let textObject = container.children.find(child => child.name === TEXT_NAME) as PIXI.Text | undefined;
-    const fontFamily = stringParam(params, 'fontFamily', 'Arial');
+    const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
     const signature = `${text}|${fontFamily}|${fontSize}|${color}`;
 
     if (!textObject) {

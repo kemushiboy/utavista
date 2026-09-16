@@ -67,6 +67,37 @@ export class Engine {
   audioFilePath?: string; // 音楽ファイルパス
   audioFileName?: string; // 音楽ファイル名
   private currentAudioElement?: HTMLAudioElement;
+  // タイムラインはメディア要素の currentTime に依存させない。
+  // Chromium のメディア時計が一時停止しても、プレビュー時間は単調に進む。
+  private playbackAnchorTimeMs: number = 0;
+  private playbackAnchorPerformanceMs: number = 0;
+  private lastPlaybackHealthLogMs: number = 0;
+  private lastObservedAudioTimeMs: number = 0;
+  private lastAudioProgressPerformanceMs: number = 0;
+  private readonly audioDiagnosticEvents = [
+    'play', 'playing', 'pause', 'waiting', 'stalled', 'suspend',
+    'seeking', 'seeked', 'canplay', 'error'
+  ] as const;
+  private readonly handleAudioDiagnosticEvent = (event: Event) => {
+    const audio = event.currentTarget as HTMLAudioElement | null;
+    if (!audio) return;
+    console.log(`[Engine] Audio event: ${event.type}`, {
+      currentTime: audio.currentTime,
+      paused: audio.paused,
+      ended: audio.ended,
+      readyState: audio.readyState,
+      networkState: audio.networkState,
+      errorCode: audio.error?.code
+    });
+  };
+  private readonly handleCurrentAudioEnded = () => {
+    this.currentTime = this.audioDuration;
+    this.pause();
+    this.dispatchCustomEvent('audio-ended', {
+      currentTime: this.currentTime,
+      audioFileName: this.audioFileName
+    });
+  };
   readonly beatManager = new BeatManager();
   private postEffectManager!: GlobalPostEffectManager;
 
@@ -118,8 +149,14 @@ export class Engine {
     defaultParams: Partial<StandardParameters> = {},
     templateId: string = 'kineticscenetemplate'
   ) {
-    // グローバル参照を設定（パーティクルシステムなどから時刻取得用）
+    // 開発時のFast RefreshやStrictModeでも描画エンジンを多重起動させない。
+    // 多重Tickerは再生を数フレーム/秒まで低下させ、音声や自動保存も重複させる。
     if (typeof window !== 'undefined') {
+      const previousEngine = (window as any).engineInstance as Engine | undefined;
+      if (previousEngine && previousEngine !== this) {
+        console.warn('[Engine] 既存のエンジンを破棄して二重初期化を防止します');
+        previousEngine.destroy();
+      }
       (window as any).engineInstance = this;
     }
     
@@ -479,10 +516,11 @@ export class Engine {
       lyricsMaxTime = Math.max(...this.phrases.map(phrase => phrase.end));
     }
     
-    // 音楽データの長さを取得
+    // 音楽データの長さを取得。ElectronではネイティブAudio要素を優先する。
     let musicMaxTime = 0;
-    if (this.audioPlayer) {
-      const state = this.audioPlayer.state();
+    if (this.currentAudioElement && Number.isFinite(this.currentAudioElement.duration)) {
+      musicMaxTime = this.currentAudioElement.duration * 1000;
+    } else if (this.audioPlayer) {
       const duration = this.audioPlayer.duration ? this.audioPlayer.duration() : 0;
       
       if (this.audioPlayer.duration && duration > 0) {
@@ -775,7 +813,55 @@ export class Engine {
   }
 
   // アニメーションフレーム更新
-  private update(delta: number) {
+  private syncPlaybackClock(timeMs: number, now: number = performance.now()): void {
+    this.playbackAnchorTimeMs = timeMs;
+    this.playbackAnchorPerformanceMs = now;
+    this.lastPlaybackHealthLogMs = now;
+
+    if (this.currentAudioElement) {
+      this.lastObservedAudioTimeMs = this.currentAudioElement.currentTime * 1000;
+      this.lastAudioProgressPerformanceMs = now;
+    }
+  }
+
+  private logPlaybackHealth(now: number, timelineTimeMs: number): void {
+    const audio = this.currentAudioElement;
+    if (!audio) return;
+
+    const audioTimeMs = audio.currentTime * 1000;
+    if (audioTimeMs > this.lastObservedAudioTimeMs + 1) {
+      this.lastObservedAudioTimeMs = audioTimeMs;
+      this.lastAudioProgressPerformanceMs = now;
+    }
+
+    if (now - this.lastPlaybackHealthLogMs < 1000) return;
+
+    console.log('[Engine] Playback health', {
+      timelineTimeMs: Math.round(timelineTimeMs),
+      audioTimeMs: Math.round(audioTimeMs),
+      audioProgressStalledForMs: Math.round(now - this.lastAudioProgressPerformanceMs),
+      paused: audio.paused,
+      ended: audio.ended,
+      seeking: audio.seeking,
+      readyState: audio.readyState,
+      networkState: audio.networkState
+    });
+    this.lastPlaybackHealthLogMs = now;
+  }
+
+  private attachAudioDiagnostics(audio: HTMLAudioElement): void {
+    this.audioDiagnosticEvents.forEach(eventName => {
+      audio.addEventListener(eventName, this.handleAudioDiagnosticEvent);
+    });
+  }
+
+  private detachAudioDiagnostics(audio: HTMLAudioElement): void {
+    this.audioDiagnosticEvents.forEach(eventName => {
+      audio.removeEventListener(eventName, this.handleAudioDiagnosticEvent);
+    });
+  }
+
+  private update(_delta: number) {
     if (!this.isRunning) return;
     
     const now = performance.now();
@@ -794,25 +880,14 @@ export class Engine {
       return;
     }
     
-    // 音楽プレイヤーの現在再生位置を直接参照して同期
-    let newTime = this.currentTime;
-    
-    if (this.audioPlayer && this.audioPlayer.state() === 'loaded') {
-      // 音楽が読み込まれている場合は音楽の再生位置を参照（オフセットを逆計算）
-      try {
-        const audioCurrentTime = this.audioPlayer.seek() * 1000; // ミリ秒に変換
-        if (typeof audioCurrentTime === 'number' && !isNaN(audioCurrentTime)) {
-          const audioOffset = this.getAudioOffset();
-          newTime = audioCurrentTime - audioOffset; // オフセットを逆算してアニメーション時間を計算
-        }
-      } catch (error) {
-        // 音楽プレイヤーからの時間取得に失敗した場合は独立した時間進行にフォールバック
-        newTime = this.currentTime + (elapsed || this.app.ticker.deltaMS);
-      }
-    } else {
-      // 音楽が読み込まれていない場合は独立した時間進行
-      newTime = this.currentTime + (elapsed || this.app.ticker.deltaMS);
-    }
+    // performance.now() を唯一のタイムライン時計にする。音声の currentTime は
+    // Chromium/OS 側のバッファリングで止まる場合があるため、表示時刻の根拠にはしない。
+    const newTime = Math.max(
+      0,
+      this.playbackAnchorTimeMs + (now - this.playbackAnchorPerformanceMs)
+    );
+
+    this.logPlaybackHealth(now, newTime);
     
     // 終了時刻チェック - タイムライン終端で自動停止
     if (newTime >= this.audioDuration) {
@@ -840,17 +915,35 @@ export class Engine {
 
   // 再生制御メソッド
   play() {
+    if (this.isRunning) return;
+
+    const now = performance.now();
     this.isRunning = true;
-    this.lastUpdateTime = performance.now();
+    this.syncPlaybackClock(this.currentTime, now);
+    this.lastUpdateTime = now;
+    // GPU復帰やバックグラウンド遷移でTickerが停止していた場合も再開する。
+    if (!this.app.ticker.started) {
+      this.app.ticker.start();
+    }
     console.log('[Engine] 再生開始');
     
-    // 音声がある場合は再生（オフセットを適用）
-    if (this.audioPlayer && this.audioPlayer.state() === 'loaded') {
+    // Electronで読み込んだネイティブAudio要素を再生時計として使用する。
+    if (this.currentAudioElement) {
       const audioOffset = this.getAudioOffset();
-      const adjustedTime = Math.max(0, (this.currentTime + audioOffset) / 1000); // 秒単位に変換、負の値は0にクランプ
+      const adjustedTime = Math.max(0, (this.currentTime + audioOffset) / 1000);
+      this.currentAudioElement.playbackRate = 1;
+      this.currentAudioElement.currentTime = adjustedTime;
+      void this.currentAudioElement.play().catch(error => {
+        console.error('[Engine] 音楽再生の開始に失敗しました:', error);
+        // 音声だけが開始できなくても、映像プレビューの時計は止めない。
+        this.dispatchCustomEvent('audio-playback-error', { error: String(error) });
+      });
+      console.log(`[Engine] 音楽再生開始 - 現在時間: ${this.currentTime}ms, オフセット: ${audioOffset}ms, 調整後: ${adjustedTime}s`);
+    } else if (this.audioPlayer && this.audioPlayer.state() === 'loaded') {
+      const audioOffset = this.getAudioOffset();
+      const adjustedTime = Math.max(0, (this.currentTime + audioOffset) / 1000);
       this.audioPlayer.seek(adjustedTime);
       this.audioPlayer.play();
-      console.log(`[Engine] 音楽再生開始 - 現在時間: ${this.currentTime}ms, オフセット: ${audioOffset}ms, 調整後: ${adjustedTime}s`);
     } else {
       const state = this.audioPlayer ? this.audioPlayer.state() : 'none';
       console.warn(`Engine: 音声ファイルが読み込まれていないため、アニメーションのみ再生します (audioPlayer: ${this.audioPlayer ? '存在' : 'null'}, state: ${state})`);
@@ -864,11 +957,20 @@ export class Engine {
   }
 
   pause() {
+    if (this.isRunning) {
+      this.currentTime = Math.min(
+        this.audioDuration,
+        Math.max(0, this.playbackAnchorTimeMs + (performance.now() - this.playbackAnchorPerformanceMs))
+      );
+    }
     this.isRunning = false;
+    this.syncPlaybackClock(this.currentTime);
     console.log('[Engine] 再生停止');
     
     // 音声がある場合は一時停止
-    if (this.audioPlayer) {
+    if (this.currentAudioElement) {
+      this.currentAudioElement.pause();
+    } else if (this.audioPlayer) {
       this.audioPlayer.pause();
     }
     
@@ -880,12 +982,17 @@ export class Engine {
 
   reset() {
     this.currentTime = 0;
+    this.syncPlaybackClock(0);
     this.beatManager.sync(0);
     this.lastUpdateTime = 0;
     this.instanceManager.update(this.currentTime);
     
     // 音声がある場合はリセット（オフセットを適用）
-    if (this.audioPlayer) {
+    if (this.currentAudioElement) {
+      this.currentAudioElement.pause();
+      const audioOffset = this.getAudioOffset();
+      this.currentAudioElement.currentTime = Math.max(0, audioOffset / 1000);
+    } else if (this.audioPlayer) {
       this.audioPlayer.stop();
       const audioOffset = this.getAudioOffset();
       const adjustedTime = Math.max(0, audioOffset / 1000); // 秒単位に変換、負の値は0にクランプ
@@ -944,13 +1051,17 @@ export class Engine {
     const seekTimestamp = Date.now();
     
     this.currentTime = timeMs;
+    this.syncPlaybackClock(timeMs);
     this.beatManager.sync(timeMs);
     this.lastUpdateTime = performance.now();
     
     this.instanceManager.update(this.currentTime);
     
     // 音声がある場合は再生中でなくてもシークを実行（オフセットを適用）
-    if (this.audioPlayer) {
+    if (this.currentAudioElement) {
+      const audioOffset = this.getAudioOffset();
+      this.currentAudioElement.currentTime = Math.max(0, (timeMs + audioOffset) / 1000);
+    } else if (this.audioPlayer) {
       // 一時停止中でも音声の位置を更新
       const audioOffset = this.getAudioOffset();
       const adjustedTime = Math.max(0, (timeMs + audioOffset) / 1000); // 秒単位に変換、負の値は0にクランプ
@@ -1114,7 +1225,9 @@ export class Engine {
       // 再生状態を復元
       if (isCurrentlyPlaying) {
         this.isRunning = true;
-        this.lastUpdateTime = performance.now();
+        const now = performance.now();
+        this.syncPlaybackClock(currentTime, now);
+        this.lastUpdateTime = now;
       }
       
       return true;
@@ -1526,57 +1639,53 @@ export class Engine {
    * HTMLAudioElement/HTMLVideoElementから音声を読み込み（Electron用）
    */
   loadAudioElement(audioElement: HTMLAudioElement | HTMLVideoElement, fileName?: string) {
-    
-    // AudioElementからHowlを作成
+    // ElectronMediaManagerのメタデータ取得用要素とは分離した、再生専用要素を持つ。
+    // 共有要素の preload=metadata や再ロード処理にプレビュー再生が巻き込まれるのを防ぐ。
     this.audioFileName = fileName || 'electron-audio';
-    this.currentAudioElement = audioElement instanceof HTMLAudioElement
-      ? audioElement
-      : Object.assign(new Audio(), { src: audioElement.src });
+    if (this.currentAudioElement) {
+      this.currentAudioElement.removeEventListener('ended', this.handleCurrentAudioEnded);
+      this.detachAudioDiagnostics(this.currentAudioElement);
+      this.currentAudioElement.pause();
+      this.currentAudioElement.removeAttribute('src');
+      this.currentAudioElement.load();
+    }
+    if (this.audioPlayer) {
+      this.audioPlayer.unload();
+      this.audioPlayer = undefined;
+    }
+    const source = audioElement.currentSrc || audioElement.src;
+    const playbackAudio = new Audio();
+    playbackAudio.preload = 'auto';
+    playbackAudio.src = source;
+    this.currentAudioElement = playbackAudio;
+    this.currentAudioElement.addEventListener('ended', this.handleCurrentAudioEnded);
+    this.attachAudioDiagnostics(this.currentAudioElement);
+    this.currentAudioElement.pause();
+    this.currentAudioElement.load();
     this.setBeatMarkers([]);
     
     // ElectronMediaManagerから現在のファイルパスを取得して更新（非同期）
     this.updateAudioFilePathFromElectronManager();
     
-    this.audioPlayer = new Howl({
-      src: [audioElement.src],
-      format: ['mp3', 'wav', 'ogg', 'm4a'],
-      html5: true,
-      preload: true, // Howlerでも確実にロード
-      onload: () => {
-        if (this.audioPlayer) {
-          const audioDuration = this.audioPlayer.duration() * 1000; // ミリ秒に変換
-          
-          // 歌詞データと音楽データの両方を考慮してタイムライン長さを再計算
-          this.calculateAndSetAudioDuration();
-          
-          // ProjectStateManagerに音楽ファイル情報を保存
-          this.projectStateManager.updateCurrentState({
-            audioFileName: this.audioFileName,
-            audioFileDuration: audioDuration
-          });
-          
-          // タイムライン更新イベントを発火
-          this.dispatchTimelineUpdatedEvent();
-          
-          
-          // 音声ファイルロード後に自動保存
-          if (this.autoSaveEnabled) {
-            this.autoSaveToLocalStorage();
-          }
-         }
-       },
-       onloaderror: (id: number, error: unknown) => {
-         console.error(`Engine: HTMLAudioElement音声ロードエラー (ID: ${id}):`, error);
-       },
-       onend: () => {
-         this.pause();
-         this.dispatchCustomEvent('audio-ended', { 
-           currentTime: this.currentTime,
-           audioFileName: this.audioFileName 
-         });
-       }
-    });
-    
+    const applyAudioMetadata = () => {
+      if (!this.currentAudioElement) return;
+      const audioDuration = Number.isFinite(this.currentAudioElement.duration)
+        ? this.currentAudioElement.duration * 1000
+        : 0;
+      this.calculateAndSetAudioDuration();
+      this.projectStateManager.updateCurrentState({
+        audioFileName: this.audioFileName,
+        audioFileDuration: audioDuration
+      });
+      this.dispatchTimelineUpdatedEvent();
+      if (this.autoSaveEnabled) this.autoSaveToLocalStorage();
+    };
+
+    if (this.currentAudioElement.readyState >= 1) {
+      applyAudioMetadata();
+    } else {
+      this.currentAudioElement.addEventListener('loadedmetadata', applyAudioMetadata, { once: true });
+    }
   }
   
   // タイムライン更新イベントを発火
@@ -1639,6 +1748,13 @@ export class Engine {
       if (this.audioPlayer) {
         this.audioPlayer.unload();
       }
+      if (this.currentAudioElement) {
+        this.currentAudioElement.removeEventListener('ended', this.handleCurrentAudioEnded);
+        this.detachAudioDiagnostics(this.currentAudioElement);
+        this.currentAudioElement.pause();
+        this.currentAudioElement.removeAttribute('src');
+        this.currentAudioElement.load();
+      }
       this.currentAudioElement = undefined;
       this.beatManager.dispose();
       
@@ -1682,8 +1798,12 @@ export class Engine {
       // グローバル参照を削除
       try {
         if (typeof window !== 'undefined') {
-          delete (window as any).__PIXI_APP__;
-          delete (window as any).engineInstance;
+          if ((window as any).__PIXI_APP__ === this.app) {
+            delete (window as any).__PIXI_APP__;
+          }
+          if ((window as any).engineInstance === this) {
+            delete (window as any).engineInstance;
+          }
         }
       } catch {}
     } catch (error) {
