@@ -154,6 +154,17 @@ export interface StandardParameters {
   enableSizeShrink?: boolean;
   sizeShrinkRate?: number;
   sizeShrinkRandomRange?: number;
+
+  // KineticSceneTemplate用（合成可能な場面モーション）
+  motionLayout?: string;
+  entranceMotion?: string;
+  sustainMotion?: string;
+  exitMotion?: string;
+  screenMotion?: string;
+  motionIntensity?: number;
+  motionSeed?: number;
+  entranceDuration?: number;
+  exitDuration?: number;
 }
 
 /**
@@ -305,5 +316,16 @@ export const DEFAULT_PARAMETERS: StandardParameters = {
   // パーティクルサイズ縮小エフェクト用デフォルト値
   enableSizeShrink: false,
   sizeShrinkRate: 1.0,
-  sizeShrinkRandomRange: 0.0
+  sizeShrinkRandomRange: 0.0,
+
+  // KineticSceneTemplate用デフォルト値
+  motionLayout: 'center',
+  entranceMotion: 'slam',
+  sustainMotion: 'pulse',
+  exitMotion: 'collapse',
+  screenMotion: 'zoom',
+  motionIntensity: 1.0,
+  motionSeed: 2026,
+  entranceDuration: 520,
+  exitDuration: 520
 };

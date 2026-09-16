@@ -4,6 +4,7 @@ export { PurePrimitiveWordSlideText } from './PurePrimitiveWordSlideText';
 export { VerticalTextTemplate } from './VerticalTextTemplate';
 export { BlackBandMaskTextPrimitive } from './BlackBandMaskTextPrimitive';
 export { VerticalBlackBandTextPrimitive } from './VerticalBlackBandTextPrimitive';
+export { KineticSceneTemplate } from './KineticSceneTemplate';
 
 // StateManager対応テンプレート（v2.0+）
 // Experimental: Stateless テンプレートは現状未統合のためエクスポートを停止
