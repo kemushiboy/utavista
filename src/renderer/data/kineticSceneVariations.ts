@@ -81,6 +81,7 @@ export const kineticSceneVariations: KineticSceneVariation[] = [
       exitMotion: 'noise',
       screenMotion: 'rgbDrift',
       motionIntensity: 1.15,
+      charSpacing: 0.55,
       shuffleCharset: '01#%&<>アイウエオカキクケコXYZ',
       shuffleRate: 42,
       shuffleDuration: 820,

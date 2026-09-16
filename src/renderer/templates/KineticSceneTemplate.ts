@@ -293,8 +293,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   }
 
   /**
-   * 画面充填レイアウト。最長単語の実測幅を基準に共通縮尺を決め、
-   * シャッフル中も隣のセルへ文字がはみ出さない余白を確保する。
+   * 画面充填レイアウト。各行を単語の実測幅で中央揃えし、
+   * 一定の余白を保ちながらフレーズとして読める間隔へ詰める。
    */
   private calculateFillWordLayout(
     params: Record<string, unknown>,
@@ -320,22 +320,30 @@ export class KineticSceneTemplate implements IAnimationTemplate {
 
     const columns = Math.max(1, Math.ceil(Math.sqrt(total * (stageWidth / Math.max(stageHeight, 1)))));
     const rows = Math.max(1, Math.ceil(total / columns));
-    const cellWidth = stageWidth * 0.88 / columns;
-    const cellHeight = stageHeight * 0.76 / rows;
-    const longestWordWidth = Math.max(fontSize, ...wordWidths);
-    const spacingPadding = fontSize * 0.16 * Math.max(0.35, spacing);
-    const availableWidth = Math.max(fontSize * 0.4, cellWidth * 0.82 - spacingPadding);
+    const gap = fontSize * 0.3 * Math.max(0.35, spacing);
+    const rowWidths = Array.from({ length: rows }, (_, rowIndex) => {
+      const start = rowIndex * columns;
+      const widths = wordWidths.slice(start, Math.min(total, start + columns));
+      return widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, widths.length - 1);
+    });
+    const widestRow = Math.max(fontSize, ...rowWidths);
     const scale = Math.min(
       1.15,
-      availableWidth / longestWordWidth,
-      cellHeight * 0.68 / Math.max(fontSize, 1)
+      stageWidth * 0.86 / widestRow,
+      stageHeight * 0.72 / Math.max(fontSize * 1.35 * rows, 1)
     );
-    const column = index % columns;
     const row = Math.floor(index / columns);
+    const column = index % columns;
+    const rowStart = row * columns;
+    const rowWidth = rowWidths[row] || wordWidths[index] || fontSize;
+    const precedingWidth = wordWidths
+      .slice(rowStart, rowStart + column)
+      .reduce((sum, width) => sum + width, 0) + gap * column;
+    const currentWordWidth = wordWidths[index] || fontSize;
 
     return {
-      x: (column - (columns - 1) / 2) * cellWidth,
-      y: (row - (rows - 1) / 2) * cellHeight,
+      x: (-rowWidth / 2 + precedingWidth + currentWordWidth / 2) * scale,
+      y: (row - (rows - 1) / 2) * fontSize * 1.35 * scale,
       rotation: 0,
       scale: Math.max(0.2, scale)
     };

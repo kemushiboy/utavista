@@ -93,7 +93,6 @@ class ElectronApp {
         console.error('Failed to load Vite dev server:', error);
         console.log('Make sure npm run dev is running on port 5173');
       });
-      this.mainWindow.webContents.openDevTools();
     } else {
       // プロダクションビルド時のHTMLファイルパス
       const rendererPath = path.join(__dirname, '../renderer/index.html');
