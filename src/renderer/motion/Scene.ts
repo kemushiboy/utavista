@@ -2,6 +2,8 @@ import {
   MotionClip,
   MotionContext,
   MotionState,
+  EasingName,
+  applyEasing,
   deterministicNoise,
   motion,
   parallel,
@@ -14,6 +16,7 @@ export type EntranceName = 'slam' | 'slide' | 'scale' | 'characterBreak' | 'inst
 export type SustainName = 'still' | 'shake' | 'pulse' | 'glitch' | 'multiply' | 'compress';
 export type ExitName = 'collapse' | 'fall' | 'shatter' | 'noise' | 'hardStop';
 export type ScreenMotionName = 'none' | 'cameraShake' | 'zoom' | 'rgbDrift' | 'afterimage';
+export type EasingSelection = EasingName | 'auto';
 
 export interface SceneDefinition {
   layout: LayoutName;
@@ -42,7 +45,12 @@ export const sceneCatalog = {
   entrances: ['slam', 'slide', 'scale', 'characterBreak', 'instant'] as EntranceName[],
   sustains: ['still', 'shake', 'pulse', 'glitch', 'multiply', 'compress'] as SustainName[],
   exits: ['collapse', 'fall', 'shatter', 'noise', 'hardStop'] as ExitName[],
-  screens: ['none', 'cameraShake', 'zoom', 'rgbDrift', 'afterimage'] as ScreenMotionName[]
+  screens: ['none', 'cameraShake', 'zoom', 'rgbDrift', 'afterimage'] as ScreenMotionName[],
+  easings: [
+    'auto', 'linear', 'easeInQuad', 'easeOutQuad', 'easeInCubic', 'easeOutCubic',
+    'easeInOutCubic', 'easeInQuart', 'easeOutQuart', 'easeOutQuint',
+    'easeInOutSine', 'easeOutExpo', 'easeInBack', 'easeOutBack'
+  ] as EasingSelection[]
 };
 
 export function calculateLayout(name: LayoutName, context: LayoutContext): LayoutResult {
@@ -82,21 +90,28 @@ export function calculateLayout(name: LayoutName, context: LayoutContext): Layou
   }
 }
 
-export function createEntrance(name: EntranceName, duration: number): MotionClip {
+export function createEntrance(
+  name: EntranceName,
+  duration: number,
+  easing: EasingSelection = 'auto'
+): MotionClip {
+  const resolvedEasing: EasingName = easing === 'auto'
+    ? (name === 'slam' || name === 'scale' ? 'easeOutBack' : 'easeOutCubic')
+    : easing;
   switch (name) {
     case 'slam':
       return parallel(
-        tween(duration, { scaleX: 3.2, scaleY: 3.2 }, { scaleX: 1, scaleY: 1 }, 'easeOutBack'),
+        tween(duration, { scaleX: 3.2, scaleY: 3.2 }, { scaleX: 1, scaleY: 1 }, resolvedEasing),
         tween(duration * 0.5, { alpha: 0 }, { alpha: 1 }, 'easeOutCubic')
       );
     case 'slide':
-      return tween(duration, { x: -280, alpha: 0, skewX: -0.18 }, { x: 0, alpha: 1, skewX: 0 }, 'easeOutCubic');
+      return tween(duration, { x: -280, alpha: 0, skewX: -0.18 }, { x: 0, alpha: 1, skewX: 0 }, resolvedEasing);
     case 'scale':
-      return tween(duration, { scaleX: 0.08, scaleY: 0.08, alpha: 0 }, { scaleX: 1, scaleY: 1, alpha: 1 }, 'easeOutBack');
+      return tween(duration, { scaleX: 0.08, scaleY: 0.08, alpha: 0 }, { scaleX: 1, scaleY: 1, alpha: 1 }, resolvedEasing);
     case 'characterBreak':
       return motion(duration, (timeMs, context) => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
-        const eased = 1 - Math.pow(1 - progress, 3);
+        const eased = applyEasing(resolvedEasing, progress);
         return {
           x: deterministicNoise(context.seed + context.index * 71) * 360 * (1 - eased),
           y: deterministicNoise(context.seed + context.index * 97) * 240 * (1 - eased),
@@ -150,30 +165,39 @@ export function createSustain(name: SustainName): MotionClip {
   }
 }
 
-export function createExit(name: ExitName, duration: number): MotionClip {
+export function createExit(
+  name: ExitName,
+  duration: number,
+  easing: EasingSelection = 'auto'
+): MotionClip {
+  const resolvedEasing: EasingName = easing === 'auto'
+    ? (name === 'fall' ? 'easeInQuad' : 'easeInCubic')
+    : easing;
   switch (name) {
     case 'collapse':
-      return tween(duration, {}, { scaleY: 0.02, scaleX: 1.3, alpha: 0 }, 'easeInCubic');
+      return tween(duration, {}, { scaleY: 0.02, scaleX: 1.3, alpha: 0 }, resolvedEasing);
     case 'fall':
-      return tween(duration, {}, { y: 360, rotation: 0.35, alpha: 0 }, 'easeInCubic');
+      return tween(duration, {}, { y: 360, rotation: 0.35, alpha: 0 }, resolvedEasing);
     case 'shatter':
       return motion(duration, (timeMs, context) => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
+        const eased = applyEasing(resolvedEasing, progress);
         return {
-          x: deterministicNoise(context.seed + context.index * 131) * 420 * progress,
-          y: (80 + Math.abs(deterministicNoise(context.seed + context.index * 149)) * 380) * progress,
-          rotation: deterministicNoise(context.seed + context.index * 167) * 2.4 * progress,
-          alpha: 1 - progress
+          x: deterministicNoise(context.seed + context.index * 131) * 420 * eased,
+          y: (80 + Math.abs(deterministicNoise(context.seed + context.index * 149)) * 380) * eased,
+          rotation: deterministicNoise(context.seed + context.index * 167) * 2.4 * eased,
+          alpha: Math.max(0, 1 - applyEasing('easeInQuad', progress))
         };
       });
     case 'noise':
       return motion(duration, (timeMs, context) => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
+        const eased = applyEasing(resolvedEasing, progress);
         const frame = Math.floor(timeMs / 35);
         return {
-          x: deterministicNoise(context.seed + frame * 173) * 24 * context.intensity,
-          skewX: deterministicNoise(context.seed + frame * 181) * 0.28,
-          alpha: 1 - progress
+          x: deterministicNoise(context.seed + frame * 173) * 24 * context.intensity * eased,
+          skewX: deterministicNoise(context.seed + frame * 181) * 0.28 * eased,
+          alpha: Math.max(0, 1 - applyEasing('easeInQuad', progress))
         };
       });
     case 'hardStop':
@@ -185,11 +209,16 @@ export function createExit(name: ExitName, duration: number): MotionClip {
 export function createScreenMotion(name: ScreenMotionName): MotionClip {
   switch (name) {
     case 'cameraShake':
-      return motion(Number.POSITIVE_INFINITY, (timeMs, context) => ({
-        x: Math.sin(timeMs * 0.052) * 5 * context.intensity,
-        y: Math.cos(timeMs * 0.063) * 4 * context.intensity,
-        rotation: Math.sin(timeMs * 0.021) * 0.006 * context.intensity
-      }));
+      return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
+        // 衝撃直後を強くし、約450msで微振動へ収束させる。
+        const impact = Math.exp(-Math.max(0, timeMs) / 170);
+        const amplitude = (0.22 + impact * 1.9) * context.intensity;
+        return {
+          x: (Math.sin(timeMs * 0.071) + Math.sin(timeMs * 0.113) * 0.45) * 4 * amplitude,
+          y: (Math.cos(timeMs * 0.083) + Math.sin(timeMs * 0.137) * 0.35) * 3 * amplitude,
+          rotation: Math.sin(timeMs * 0.047) * 0.005 * amplitude
+        };
+      });
     case 'zoom':
       return motion(Number.POSITIVE_INFINITY, timeMs => {
         const scale = 1 + (1 - Math.cos(timeMs * Math.PI * 2 / 2400)) * 0.025;
@@ -215,4 +244,3 @@ export function createScreenMotion(name: ScreenMotionName): MotionClip {
 export function sampleClip(clip: MotionClip, timeMs: number, context: MotionContext): MotionState {
   return clip.sample(Math.max(0, timeMs), context);
 }
-

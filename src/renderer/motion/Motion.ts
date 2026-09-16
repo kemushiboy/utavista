@@ -1,8 +1,16 @@
 export type EasingName =
   | 'linear'
+  | 'easeInQuad'
+  | 'easeOutQuad'
   | 'easeInCubic'
   | 'easeOutCubic'
   | 'easeInOutCubic'
+  | 'easeInQuart'
+  | 'easeOutQuart'
+  | 'easeOutQuint'
+  | 'easeInOutSine'
+  | 'easeOutExpo'
+  | 'easeInBack'
   | 'easeOutBack';
 
 export interface MotionState {
@@ -41,11 +49,22 @@ export const IDENTITY_MOTION: MotionState = {
 
 const easingFunctions: Record<EasingName, (value: number) => number> = {
   linear: value => value,
+  easeInQuad: value => value * value,
+  easeOutQuad: value => 1 - (1 - value) * (1 - value),
   easeInCubic: value => value * value * value,
   easeOutCubic: value => 1 - Math.pow(1 - value, 3),
   easeInOutCubic: value => value < 0.5
     ? 4 * value * value * value
     : 1 - Math.pow(-2 * value + 2, 3) / 2,
+  easeInQuart: value => value * value * value * value,
+  easeOutQuart: value => 1 - Math.pow(1 - value, 4),
+  easeOutQuint: value => 1 - Math.pow(1 - value, 5),
+  easeInOutSine: value => -(Math.cos(Math.PI * value) - 1) / 2,
+  easeOutExpo: value => value === 1 ? 1 : 1 - Math.pow(2, -10 * value),
+  easeInBack: value => {
+    const overshoot = 1.70158;
+    return (overshoot + 1) * value * value * value - overshoot * value * value;
+  },
   easeOutBack: value => {
     const overshoot = 1.70158;
     return 1 + (overshoot + 1) * Math.pow(value - 1, 3) + overshoot * Math.pow(value - 1, 2);
@@ -53,6 +72,10 @@ const easingFunctions: Record<EasingName, (value: number) => number> = {
 };
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+
+export function applyEasing(name: EasingName, value: number): number {
+  return easingFunctions[name](clamp01(value));
+}
 
 function stateWith(values: Partial<MotionState>): MotionState {
   return { ...IDENTITY_MOTION, ...values };
@@ -94,7 +117,7 @@ export function tween(
 ): MotionClip {
   const keys = Array.from(new Set([...Object.keys(from), ...Object.keys(to)])) as Array<keyof MotionState>;
   return motion(duration, timeMs => {
-    const progress = easingFunctions[easing](clamp01(duration <= 0 ? 1 : timeMs / duration));
+    const progress = applyEasing(easing, duration <= 0 ? 1 : timeMs / duration);
     const result: Partial<MotionState> = {};
     keys.forEach(key => {
       const start = from[key] ?? IDENTITY_MOTION[key];
@@ -152,4 +175,3 @@ export function deterministicNoise(seed: number): number {
   const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
   return (value - Math.floor(value)) * 2 - 1;
 }
-

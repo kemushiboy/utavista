@@ -12,6 +12,7 @@ import { TextStyleFactory } from '../utils/TextStyleFactory';
 import { getLogicalStageSize } from '../utils/StageUtils';
 import {
   EntranceName,
+  EasingSelection,
   ExitName,
   LayoutName,
   MotionContext,
@@ -90,7 +91,9 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'motionIntensity', type: 'number', default: 1, min: 0, max: 3, step: 0.05, label: 'モーション強度' },
       { name: 'motionSeed', type: 'number', default: 2026, min: 0, max: 99999, step: 1, label: 'ランダムシード' },
       { name: 'entranceDuration', type: 'number', default: 520, min: 0, max: 2500, step: 20, label: '出現時間' },
+      { name: 'entranceEasing', type: 'string', default: 'auto', options: sceneCatalog.easings, label: '出現イージング' },
       { name: 'exitDuration', type: 'number', default: 520, min: 1, max: 2500, step: 20, label: '消失時間' },
+      { name: 'exitEasing', type: 'string', default: 'auto', options: sceneCatalog.easings, label: '消失イージング' },
       { name: 'shuffleEnabled', type: 'boolean', default: false, label: '文字シャッフル' },
       { name: 'shuffleCharset', type: 'string', default: '01#%&<>アイウエオXYZ', label: '置換文字セット' },
       { name: 'shuffleRate', type: 'number', default: 50, min: 16, max: 400, step: 1, label: '置換間隔 (ms)' },
@@ -208,10 +211,15 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const exitDuration = numberParam(params, 'exitDuration', 520);
     const entrance = createEntrance(
       scene.entrance,
-      entranceDuration
+      entranceDuration,
+      stringParam(params, 'entranceEasing', 'auto') as EasingSelection
     );
     const sustain = createSustain(scene.sustain);
-    const exit = createExit(scene.exit, exitDuration);
+    const exit = createExit(
+      scene.exit,
+      exitDuration,
+      stringParam(params, 'exitEasing', 'auto') as EasingSelection
+    );
 
     let motionState;
     if (nowMs < startMs) {

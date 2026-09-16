@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   combineMotionStates,
+  applyEasing,
   delay,
   deterministicNoise,
   parallel,
@@ -8,7 +9,7 @@ import {
   sequence,
   tween
 } from '../src/renderer/motion/Motion';
-import { createEntrance, createSustain } from '../src/renderer/motion/Scene';
+import { createEntrance, createExit, createSustain } from '../src/renderer/motion/Scene';
 import { createShuffledText, destructionEnvelope } from '../src/renderer/motion/TypographyEffects';
 import { kineticSceneVariations } from '../src/renderer/data/kineticSceneVariations';
 import { KineticSceneTemplate } from '../src/renderer/templates/KineticSceneTemplate';
@@ -36,6 +37,24 @@ assert.ok(composed.scaleX > 1);
 assert.equal(deterministicNoise(42), deterministicNoise(42));
 assert.deepEqual(combineMotionStates(first), first);
 
+const easingNames = [
+  'linear', 'easeInQuad', 'easeOutQuad', 'easeInCubic', 'easeOutCubic',
+  'easeInOutCubic', 'easeInQuart', 'easeOutQuart', 'easeOutQuint',
+  'easeInOutSine', 'easeOutExpo', 'easeInBack', 'easeOutBack'
+] as const;
+easingNames.forEach(easing => {
+  assert.ok(Math.abs(applyEasing(easing, 0)) < 1e-10, `${easing}: 開始値が0ではありません`);
+  assert.ok(Math.abs(applyEasing(easing, 1) - 1) < 1e-10, `${easing}: 終了値が1ではありません`);
+});
+assert.deepEqual(
+  createEntrance('slide', 620, 'easeOutQuart').sample(310, context),
+  createEntrance('slide', 620, 'easeOutQuart').sample(310, context)
+);
+assert.deepEqual(
+  createExit('shatter', 680, 'easeInBack').sample(420, context),
+  createExit('shatter', 680, 'easeInBack').sample(420, context)
+);
+
 const shuffled = createShuffledText('DATA', 0.25, 180, 45, '01#', 2026);
 assert.equal(shuffled, createShuffledText('DATA', 0.25, 180, 45, '01#', 2026));
 assert.equal(createShuffledText('DATA', 1, 180, 45, '01#', 2026), 'DATA');
@@ -43,7 +62,7 @@ assert.equal(destructionEnvelope(0, 900), 0);
 assert.ok(destructionEnvelope(450, 900) > 0.99);
 assert.ok(Math.abs(destructionEnvelope(900, 900)) < 1e-10);
 
-assert.equal(kineticSceneVariations.length, 6);
+assert.equal(kineticSceneVariations.length, 12);
 const kineticParameterNames = new Set(new KineticSceneTemplate().getParameterConfig().map(parameter => parameter.name));
 kineticSceneVariations.forEach(variation => {
   Object.keys(variation.params).forEach(parameterName => {

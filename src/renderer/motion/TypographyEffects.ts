@@ -87,6 +87,11 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+function smoothstep(value: number): number {
+  const clamped = clamp01(value);
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
 function destroyDisplayObject(displayObject: PIXI.DisplayObject): void {
   if (displayObject.parent) displayObject.parent.removeChild(displayObject);
   displayObject.destroy({ children: true });
@@ -177,7 +182,8 @@ export class TypographyEffects {
       return;
     }
     const elapsed = context.nowMs - (context.startMs - params.shuffleDuration);
-    const progress = clamp01(elapsed / Math.max(1, params.shuffleDuration));
+    // 確定文字数を開始・終了で滑らかにし、最後の文字が唐突に切り替わる印象を抑える。
+    const progress = smoothstep(elapsed / Math.max(1, params.shuffleDuration));
     source.text = createShuffledText(
       originalText,
       progress,
