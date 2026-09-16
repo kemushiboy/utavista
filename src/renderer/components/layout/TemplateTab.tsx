@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getAllTemplates, getTemplateById } from '../../templates/registry/templateRegistry';
 import TemplateSelector from '../TemplatePanel/TemplateSelector';
 import ParamEditor from '../ParamEditor/ParamEditor';
+import TemplatePresetPanel from '../TemplatePanel/TemplatePresetPanel';
 import Engine from '../../engine/Engine';
 import { IAnimationTemplate } from '../../types/types';
 import '../../styles/TemplateTab.css';
@@ -1298,6 +1299,15 @@ const TemplateTab: React.FC<TemplateTabProps> = ({
                 paramConfig={getTemplateParamConfig(selectedTemplate)}
                 onChange={handleGlobalParamChange}
               />
+
+              {selectedTemplate === 'kineticscenetemplate' && (
+                <TemplatePresetPanel
+                  templateId={selectedTemplate}
+                  params={state.globalParams}
+                  paramConfig={getTemplateParamConfig(selectedTemplate)}
+                  onApply={handleGlobalParamChange}
+                />
+              )}
               
               {/* 全個別設定強制クリアセクション */}
               <div className="force-clean-section">
@@ -1407,13 +1417,23 @@ const TemplateTab: React.FC<TemplateTabProps> = ({
                 テンプレートを統一するか、単一のオブジェクトを選択してください。</p>
               </div>
             ) : (
-              <ParamEditor
-                key={`object-${getCurrentTemplateId()}-${fontReloadTrigger}`}
-                params={objectParams}
-                paramConfig={getTemplateParamConfig(getCurrentTemplateId())}
-                onChange={handleObjectParamChange}
-                disabled={state.hasMixedTemplates}
-              />
+              <>
+                <ParamEditor
+                  key={`object-${getCurrentTemplateId()}-${fontReloadTrigger}`}
+                  params={objectParams}
+                  paramConfig={getTemplateParamConfig(getCurrentTemplateId())}
+                  onChange={handleObjectParamChange}
+                  disabled={state.hasMixedTemplates}
+                />
+                {getCurrentTemplateId() === 'kineticscenetemplate' && (
+                  <TemplatePresetPanel
+                    templateId={getCurrentTemplateId()}
+                    params={objectParams}
+                    paramConfig={getTemplateParamConfig(getCurrentTemplateId())}
+                    onApply={handleObjectParamChange}
+                  />
+                )}
+              </>
             )}
           </div>
         </div>

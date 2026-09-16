@@ -40,7 +40,7 @@ function stringParam(params: Record<string, unknown>, name: string, fallback: st
 }
 
 /**
- * 小さなモーションをデータで組み合わせる、場面ベースのキネティック・タイポグラフィ。
+ * 小さなモーションをデータで組み合わせる、単語・場面ベースのキネティック・タイポグラフィ。
  * すべての状態は nowMs と seed から直接評価され、フレーム履歴を持たない。
  */
 export class KineticSceneTemplate implements IAnimationTemplate {
@@ -73,12 +73,12 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'tailTime', type: 'number', default: 650, min: 0, max: 3000, step: 50, label: '残留時間' },
       { name: 'phraseOffsetX', type: 'number', default: 0, min: -900, max: 900, step: 5, label: '場面X位置' },
       { name: 'phraseOffsetY', type: 'number', default: 0, min: -500, max: 500, step: 5, label: '場面Y位置' },
-      { name: 'charSpacing', type: 'number', default: 0.9, min: 0.35, max: 3, step: 0.05, label: '文字間隔' },
-      { name: 'motionLayout', type: 'select', default: 'center', options: sceneCatalog.layouts, label: 'レイアウト' },
-      { name: 'entranceMotion', type: 'select', default: 'slam', options: sceneCatalog.entrances, label: '出現' },
-      { name: 'sustainMotion', type: 'select', default: 'pulse', options: sceneCatalog.sustains, label: '継続' },
-      { name: 'exitMotion', type: 'select', default: 'collapse', options: sceneCatalog.exits, label: '消失' },
-      { name: 'screenMotion', type: 'select', default: 'zoom', options: sceneCatalog.screens, label: '画面全体' },
+      { name: 'charSpacing', type: 'number', default: 0.9, min: 0.35, max: 3, step: 0.05, label: '単語間隔' },
+      { name: 'motionLayout', type: 'string', default: 'center', options: sceneCatalog.layouts, label: 'レイアウト' },
+      { name: 'entranceMotion', type: 'string', default: 'slam', options: sceneCatalog.entrances, label: '出現' },
+      { name: 'sustainMotion', type: 'string', default: 'pulse', options: sceneCatalog.sustains, label: '継続' },
+      { name: 'exitMotion', type: 'string', default: 'collapse', options: sceneCatalog.exits, label: '消失' },
+      { name: 'screenMotion', type: 'string', default: 'zoom', options: sceneCatalog.screens, label: '画面全体' },
       { name: 'motionIntensity', type: 'number', default: 1, min: 0, max: 3, step: 0.05, label: 'モーション強度' },
       { name: 'motionSeed', type: 'number', default: 2026, min: 0, max: 99999, step: 1, label: 'ランダムシード' },
       { name: 'entranceDuration', type: 'number', default: 520, min: 0, max: 2500, step: 20, label: '出現時間' },
@@ -103,13 +103,11 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       return this.renderPhrase(container, params, nowMs, startMs);
     }
     if (hierarchyType === 'word') {
-      container.position.set(0, 0);
-      container.scale.set(1, 1);
-      container.rotation = 0;
-      container.alpha = 1;
-      return true;
+      return this.renderWord(container, content, params, nowMs, startMs, endMs);
     }
-    return this.renderCharacter(container, content, params, nowMs, startMs, endMs);
+    // このテンプレートは単語タイミングを描画単位とし、文字コンテナは重複表示しない。
+    container.visible = false;
+    return true;
   }
 
   removeVisualElements(container: PIXI.Container): void {
@@ -148,7 +146,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     return true;
   }
 
-  private renderCharacter(
+  private renderWord(
     container: PIXI.Container,
     text: string,
     params: Record<string, unknown>,
@@ -157,8 +155,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     endMs: number
   ): boolean {
     const { width, height } = getLogicalStageSize();
-    const index = Math.max(0, numberParam(params, 'charIndex', 0));
-    const total = Math.max(1, numberParam(params, 'totalChars', 1));
+    const index = Math.max(0, numberParam(params, 'wordIndex', 0));
+    const total = Math.max(1, numberParam(params, 'totalWords', 1));
     const fontSize = numberParam(params, 'fontSize', 112);
     const intensity = numberParam(params, 'motionIntensity', 1);
     const seed = numberParam(params, 'motionSeed', 2026);
@@ -166,16 +164,10 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const context: MotionContext = { seed, index, total, intensity };
     const scene = this.resolveScene(params);
 
-    const layout = calculateLayout(
-      scene.layout,
-      {
-        ...context,
-        width,
-        height,
-        fontSize,
-        spacing: numberParam(params, 'charSpacing', 0.9)
-      }
-    );
+    const spacing = numberParam(params, 'charSpacing', 0.9);
+    const layout = scene.layout === 'center'
+      ? this.calculateCenteredWordLayout(params, index, fontSize, spacing)
+      : calculateLayout(scene.layout, { ...context, width, height, fontSize, spacing: spacing * 2.2 });
 
     const entranceDuration = numberParam(params, 'entranceDuration', 520);
     const exitDuration = numberParam(params, 'exitDuration', 520);
@@ -186,15 +178,14 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const sustain = createSustain(scene.sustain);
     const exit = createExit(scene.exit, exitDuration);
 
-    const characterDelay = Math.min(180, index * 18);
     let motionState;
-    if (nowMs < startMs + characterDelay) {
-      motionState = sampleClip(entrance, nowMs - (startMs + characterDelay - entranceDuration), context);
+    if (nowMs < startMs) {
+      motionState = sampleClip(entrance, nowMs - (startMs - entranceDuration), context);
     } else if (nowMs > phraseEndMs) {
       motionState = sampleClip(exit, nowMs - phraseEndMs, context);
     } else {
       const entranceState = sampleClip(entrance, entrance.duration, context);
-      const sustainState = sampleClip(sustain, nowMs - startMs - characterDelay, context);
+      const sustainState = sampleClip(sustain, nowMs - startMs, context);
       motionState = combineMotionStates(entranceState, sustainState);
     }
 
@@ -212,6 +203,29 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const textObject = this.ensureText(container, text, params, fontSize, color);
     this.updateEchoes(container, textObject, params, nowMs, intensity);
     return true;
+  }
+
+  private calculateCenteredWordLayout(
+    params: Record<string, unknown>,
+    index: number,
+    fontSize: number,
+    spacing: number
+  ): { x: number; y: number; rotation: number; scale: number } {
+    const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
+    const widths = words.map(word => Math.max(fontSize * 0.7, (word.word?.length || 1) * fontSize * 0.62));
+    if (widths.length === 0 || index >= widths.length) {
+      return { x: (index - (Math.max(1, numberParam(params, 'totalWords', 1)) - 1) / 2) * fontSize * 2, y: 0, rotation: 0, scale: 1 };
+    }
+
+    const gap = fontSize * 0.32 * spacing;
+    const totalWidth = widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, widths.length - 1);
+    const precedingWidth = widths.slice(0, index).reduce((sum, width) => sum + width, 0) + gap * index;
+    return {
+      x: -totalWidth / 2 + precedingWidth + widths[index] / 2,
+      y: 0,
+      rotation: 0,
+      scale: 1
+    };
   }
 
   private ensureText(

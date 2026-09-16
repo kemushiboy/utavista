@@ -35,7 +35,7 @@ const breathing = repeat(
 
 ## シーンテンプレート
 
-`KineticSceneTemplate` は次の部品をパラメータから選び、場面を組み立てます。
+`KineticSceneTemplate` は単語の `start` / `end` を描画タイミングとして使い、次の部品をパラメータから選んで場面を組み立てます。文字単位の調整は不要です。
 
 - Layout: `center`, `random`, `circle`, `vertical`, `fill`
 - Entrance: `slam`, `slide`, `scale`, `characterBreak`, `instant`
@@ -45,3 +45,6 @@ const breathing = repeat(
 
 新しい動きは `Scene.ts` の各ファクトリーへ `MotionClip` を追加し、カタログに名前を登録します。テンプレートクラスを新設する必要はありません。
 
+## 設定プリセット
+
+テンプレートタブで `KineticSceneTemplate` を選ぶと、現在のレイアウト、モーション、時間、色、フォント設定を名前付きプリセットとして保存できます。プリセットはアプリのローカルストレージへ保存され、別のプロジェクトや選択中のフレーズにも適用できます。保存済みプリセットは上書き・削除できます。
