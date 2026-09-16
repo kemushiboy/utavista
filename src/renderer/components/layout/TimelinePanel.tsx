@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import HierarchicalMarker from '../timeline/HierarchicalMarker';
 import WaveformPanel from './WaveformPanel';
+import BeatMarkers from '../timeline/BeatMarkers';
+import type { BeatMarker } from '../../services/AudioAnalyzer';
 import { PhraseUnit, WordUnit, CharUnit, IAnimationTemplate } from '../../types/types';
 import { MarkerLevel, SelectionState } from '../timeline/types/HierarchicalMarkerTypes';
 import { getMarkerLevel, getParentObjectId, MIN_DURATIONS, calculateBlockConstraints } from '../timeline/MarkerConstraints';
@@ -38,6 +40,19 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
   const [lyrics, setLyrics] = useState<PhraseUnit[]>([]);
   const [width, setWidth] = useState(800);
   const [localDuration, setLocalDuration] = useState(totalDuration || 10000);
+  const [beats, setBeats] = useState<BeatMarker[]>(() => engine?.getBeatMarkers() || []);
+
+  useEffect(() => {
+    setBeats(engine?.getBeatMarkers() || []);
+
+    const handleBeatMarkersUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ beats: BeatMarker[] }>).detail;
+      setBeats(detail?.beats || []);
+    };
+
+    window.addEventListener('beat-markers-updated', handleBeatMarkersUpdated);
+    return () => window.removeEventListener('beat-markers-updated', handleBeatMarkersUpdated);
+  }, [engine]);
   
   // 選択状態管理
   const [selectionState, setSelectionState] = useState<SelectionState>({
@@ -1399,6 +1414,14 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
           }}
         >
           <div className="timeline-content" style={{ width: `${timelineWidth}px`, position: 'relative' }}>
+          <BeatMarkers
+            beats={beats}
+            duration={duration}
+            timelineWidth={timelineWidth}
+            msPerPixel={msPerPixel}
+            viewStart={externalViewStart ?? 0}
+            currentTime={currentTime}
+          />
           {/* 波形表示 */}
           <div className="waveform-wrapper">
             <WaveformPanel 

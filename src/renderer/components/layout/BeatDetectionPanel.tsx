@@ -69,9 +69,7 @@ const BeatDetectionPanel: React.FC<BeatDetectionPanelProps> = ({ engine }) => {
         );
         
         // エンジンにビート情報を送信
-        if (engine.setBeatMarkers) {
-          engine.setBeatMarkers(result.beats);
-        }
+        engine.setBeatMarkers(result.beats);
         
         // タイムラインにビートマーカー表示イベントを発火
         const beatEvent = new CustomEvent('beat-detection-completed', {
@@ -82,7 +80,9 @@ const BeatDetectionPanel: React.FC<BeatDetectionPanelProps> = ({ engine }) => {
         console.log('Beat detection completed:', {
           beatsCount: result.beats.length,
           bpm: result.bpm,
-          averageConfidence: result.beats.reduce((sum, beat) => sum + beat.confidence, 0) / result.beats.length
+          averageConfidence: result.beats.length > 0
+            ? result.beats.reduce((sum, beat) => sum + beat.confidence, 0) / result.beats.length
+            : 0
         });
       } else {
         setErrorMessage('ビート検出に失敗しました');
@@ -131,7 +131,7 @@ const BeatDetectionPanel: React.FC<BeatDetectionPanelProps> = ({ engine }) => {
     setAnalysisResult(null);
     setSuccessMessage(null);
     
-    if (engine && engine.setBeatMarkers) {
+    if (engine) {
       engine.setBeatMarkers([]);
     }
     

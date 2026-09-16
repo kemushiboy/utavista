@@ -367,13 +367,11 @@ class ElectronApp {
       });
     });
 
-    // GPU/child process crash diagnostics
-    app.on('gpu-process-crashed', (event, killed) => {
-      console.error('[GPU] gpu-process-crashed:', { killed });
-    });
-
-    app.on('child-process-gone', (event, details) => {
-      console.error('[GPU] child-process-gone:', details);
+    // GPU/child process crash diagnostics. `gpu-process-crashed` was removed
+    // from recent Electron versions; GPU failures are reported here instead.
+    app.on('child-process-gone', (_event, details) => {
+      const processLabel = details.type === 'GPU' ? '[GPU]' : '[Child Process]';
+      console.error(`${processLabel} child-process-gone:`, details);
     });
   }
   

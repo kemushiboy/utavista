@@ -4,6 +4,7 @@ import { electronMediaManager } from '../../services/ElectronMediaManager';
 import { logger } from '../../../utils/logger';
 import { AspectRatio, Orientation, BackgroundType, BackgroundFitMode } from '../../types/types';
 import { Button, Select, Section, StatusMessage } from '../common';
+import BeatDetectionPanel from './BeatDetectionPanel';
 import '../../styles/components.css';
 
 interface ContentTabProps {
@@ -534,6 +535,10 @@ const ContentTab: React.FC<ContentTabProps> = ({ engine, onLyricsEditModeToggle 
           )}
         </div>
       </Section>
+
+      <hr className="u-divider" />
+
+      <BeatDetectionPanel engine={engine} />
 
       <hr className="u-divider" />
 

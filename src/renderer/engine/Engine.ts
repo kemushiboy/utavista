@@ -21,6 +21,8 @@ import { UnifiedRestoreManager } from './UnifiedRestoreManager';
 import { SparkleEffectPrimitive } from '../primitives/effects/SparkleEffectPrimitive';
 import { ProjectFileData, AutoSaveData } from '../../types/UnifiedProjectData';
 import { OptimizedParameterUpdater } from './OptimizedParameterUpdater';
+import { BeatManager, BeatEventDetail } from '../services/BeatManager';
+import type { BeatMarker } from '../services/AudioAnalyzer';
 
 export class Engine {
   // パラメータカテゴリ分類
@@ -63,6 +65,8 @@ export class Engine {
   audioDuration: number = 10000; // デフォルト10秒
   audioFilePath?: string; // 音楽ファイルパス
   audioFileName?: string; // 音楽ファイル名
+  private currentAudioElement?: HTMLAudioElement;
+  readonly beatManager = new BeatManager();
 
   // 方眼目盛りと座標表示用のオーバーレイ
   private gridOverlay?: GridOverlay;
@@ -814,6 +818,7 @@ export class Engine {
     
     this.currentTime = newTime;
     this.lastUpdateTime = now;
+    this.beatManager.update(this.currentTime);
     
     // インスタンスマネージャーの更新
     this.instanceManager.update(this.currentTime);
@@ -868,6 +873,7 @@ export class Engine {
 
   reset() {
     this.currentTime = 0;
+    this.beatManager.sync(0);
     this.lastUpdateTime = 0;
     this.instanceManager.update(this.currentTime);
     
@@ -931,6 +937,7 @@ export class Engine {
     const seekTimestamp = Date.now();
     
     this.currentTime = timeMs;
+    this.beatManager.sync(timeMs);
     this.lastUpdateTime = performance.now();
     
     this.instanceManager.update(this.currentTime);
@@ -993,6 +1000,7 @@ export class Engine {
       
       // 時間を設定
       this.currentTime = timeMs;
+      this.beatManager.sync(timeMs);
       this.lastUpdateTime = performance.now();
       
       // インスタンスマネージャーを更新
@@ -1514,6 +1522,10 @@ export class Engine {
     
     // AudioElementからHowlを作成
     this.audioFileName = fileName || 'electron-audio';
+    this.currentAudioElement = audioElement instanceof HTMLAudioElement
+      ? audioElement
+      : Object.assign(new Audio(), { src: audioElement.src });
+    this.setBeatMarkers([]);
     
     // ElectronMediaManagerから現在のファイルパスを取得して更新（非同期）
     this.updateAudioFilePathFromElectronManager();
@@ -1620,6 +1632,8 @@ export class Engine {
       if (this.audioPlayer) {
         this.audioPlayer.unload();
       }
+      this.currentAudioElement = undefined;
+      this.beatManager.dispose();
       
       // デバッグマネージャーをクリーンアップ
       if (this.debugManager) {
@@ -2053,6 +2067,7 @@ export class Engine {
   // 現在時刻を設定するメソッド（動画出力用）
   setCurrentTime(timeMs: number): void {
     this.currentTime = timeMs;
+    this.beatManager.sync(timeMs);
     // OptimizedParameterUpdaterの現在時刻も更新
     if (this.optimizedUpdater) {
       this.optimizedUpdater.setCurrentTime(timeMs);
@@ -2191,6 +2206,25 @@ export class Engine {
   // 現在時刻を取得するメソッド（動画出力用）
   getCurrentTime(): number {
     return this.currentTime;
+  }
+
+  getCurrentAudioElement(): HTMLAudioElement | undefined {
+    return this.currentAudioElement;
+  }
+
+  setBeatMarkers(beats: BeatMarker[]): void {
+    this.beatManager.setBeats(beats);
+    window.dispatchEvent(new CustomEvent('beat-markers-updated', {
+      detail: { beats: this.getBeatMarkers() }
+    }));
+  }
+
+  getBeatMarkers(): BeatMarker[] {
+    return [...this.beatManager.getBeats()];
+  }
+
+  onBeat(listener: (detail: BeatEventDetail) => void): () => void {
+    return this.beatManager.subscribe(listener);
   }
   
   // 音楽オフセット値を取得するメソッド
