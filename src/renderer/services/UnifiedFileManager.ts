@@ -16,9 +16,9 @@ export class UnifiedFileManager {
   /**
    * プロジェクト保存
    */
-  async saveProject(projectData: ProjectData): Promise<string> {
+  async saveProject(projectData: ProjectData, options: { saveAs?: boolean } = {}): Promise<string> {
     try {
-      const filePath = await this.electronAPI.saveProject(projectData);
+      const filePath = await this.electronAPI.saveProject(projectData, options);
       return filePath;
     } catch (error) {
       console.error('UnifiedFileManager: プロジェクト保存エラー:', error);
@@ -62,6 +62,16 @@ export class UnifiedFileManager {
     } catch (error) {
       console.error('UnifiedFileManager: オーディオファイル選択エラー:', error);
       throw new Error(`オーディオファイルの選択に失敗しました: ${error}`);
+    }
+  }
+
+  /** 背景画像ファイル選択 */
+  async selectImageFile(): Promise<MediaFileInfo> {
+    try {
+      return await this.electronAPI.selectMedia('image');
+    } catch (error) {
+      console.error('UnifiedFileManager: 画像ファイル選択エラー:', error);
+      throw new Error(`画像ファイルの選択に失敗しました: ${error}`);
     }
   }
   

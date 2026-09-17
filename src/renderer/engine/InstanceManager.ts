@@ -545,21 +545,31 @@ export class InstanceManager {
     // パラメータから個別のヘッドタイムとテールタイムを取得
     const headTime = instance.params.headTime !== undefined ? instance.params.headTime : maxHeadTime;
     const tailTime = instance.params.tailTime !== undefined ? instance.params.tailTime : maxTailTime;
-    
-    // 単語コンテナの場合、フレーズの時間範囲を使用
-    if (instance.hierarchyType === 'word' && instance.params.phraseStartMs && instance.params.phraseEndMs) {
-      // 単語コンテナはフレーズの時間範囲に依存して表示される
-      return nowMs >= instance.params.phraseStartMs - headTime && nowMs <= instance.params.phraseEndMs + tailTime;
+    // 消失モーションを途中で打ち切らない。残留時間が消失時間より短い場合でも、
+    // 少なくともモーションクリップの終端まではインスタンスを更新し続ける。
+    const configuredExitDuration = Number(instance.params.exitDuration);
+    const visibleTailTime = Number.isFinite(configuredExitDuration)
+      ? Math.max(tailTime, configuredExitDuration)
+      : tailTime;
+
+    // 単語は個別の開始時刻からheadTimeだけ先行して表示する。
+    // ただしフレーズ開始前には一切表示しない。
+    const hasPhraseRange = typeof instance.params.phraseStartMs === 'number'
+      && typeof instance.params.phraseEndMs === 'number';
+
+    if (instance.hierarchyType === 'word' && hasPhraseRange) {
+      const visibleStartMs = Math.max(instance.params.phraseStartMs, instance.startMs - headTime);
+      return nowMs >= visibleStartMs && nowMs <= instance.params.phraseEndMs + visibleTailTime;
     }
     
     // 文字コンテナの場合もフレーズの時間範囲を使用
-    if (instance.hierarchyType === 'char' && instance.params.phraseStartMs && instance.params.phraseEndMs) {
+    if (instance.hierarchyType === 'char' && hasPhraseRange) {
       // 文字コンテナもフレーズの時間範囲に依存して表示される
-      return nowMs >= instance.params.phraseStartMs - headTime && nowMs <= instance.params.phraseEndMs + tailTime;
+      return nowMs >= instance.params.phraseStartMs - headTime && nowMs <= instance.params.phraseEndMs + visibleTailTime;
     }
     
     // フレーズコンテナの場合、自身の時間範囲を使用
-    return nowMs >= instance.startMs - headTime && nowMs <= instance.endMs + tailTime;
+    return nowMs >= instance.startMs - headTime && nowMs <= instance.endMs + visibleTailTime;
   }
   
   // テンプレートメタデータからヘッドタイムの最大値を取得

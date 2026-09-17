@@ -287,6 +287,20 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
     }
   }, [showStatus]);
 
+  const handleSaveAs = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const savedPath = await projectFileManager.current.saveProject('project', true);
+      setLastSaved(new Date().toLocaleString('ja-JP'));
+      showStatus(`別名で保存しました: ${savedPath}`, 'success');
+    } catch (error) {
+      console.error('Save as error:', error);
+      showStatus('別名保存に失敗しました', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [showStatus]);
+
   // プロジェクト読み込み
   const handleOpen = useCallback(async () => {
     setIsLoading(true);
@@ -521,11 +535,7 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   // キーボードショートカット
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        handleSave();
-      }
-      else if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
         e.preventDefault();
         handleOpen();
       }
@@ -535,7 +545,7 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleSave, handleOpen]);
+  }, [handleOpen]);
 
   return (
     <div className="project-tab panel-content">
@@ -548,6 +558,13 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
             disabled={isLoading}
           >
             保存 (Ctrl+S)
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={handleSaveAs}
+            disabled={isLoading}
+          >
+            別名で保存 (Ctrl+Shift+S)
           </Button>
           <Button 
             variant="info"

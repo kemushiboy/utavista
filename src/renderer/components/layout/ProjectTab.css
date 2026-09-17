@@ -7,9 +7,19 @@
 }
 
 .project-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
+  width: 100%;
+  min-width: 0;
+}
+
+.project-actions .common-button {
+  width: 100%;
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.3;
 }
 
 .project-info {

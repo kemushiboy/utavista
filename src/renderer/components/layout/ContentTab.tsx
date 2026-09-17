@@ -598,7 +598,8 @@ const ContentTab: React.FC<ContentTabProps> = ({ engine, onLyricsEditModeToggle 
                 try {
                   const result = await electronMediaManager.loadBackgroundImage();
                   if (result && engine) {
-                    const { imageUrl, fileName } = result;
+                    const { imageUrl } = result;
+                    await engine.setBackgroundImage(imageUrl, fitMode);
                     setBackgroundImageUrl(imageUrl);
                     updateBackgroundConfig({ imageFilePath: imageUrl });
                     

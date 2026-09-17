@@ -18,7 +18,7 @@ export interface MediaFileInfo {
   path: string;
   name: string;
   size: number;
-  type: 'video' | 'audio';
+  type: 'video' | 'audio' | 'image';
   lastModified: Date;
   duration?: number;
   resolution?: {
@@ -107,9 +107,9 @@ export interface MainToRendererChannels {
 }
 
 export interface RendererToMainChannels {
-  'file:save-project': (projectData: ProjectData) => Promise<string>;
+  'file:save-project': (projectData: ProjectData, options?: { saveAs?: boolean }) => Promise<string>;
   'file:load-project': () => Promise<ProjectData>;
-  'file:select-media': (type: 'video' | 'audio') => Promise<MediaFileInfo>;
+  'file:select-media': (type: 'video' | 'audio' | 'image') => Promise<MediaFileInfo>;
   'export:start': (options: ExportOptions) => Promise<void>;
   'export:cancel': () => Promise<void>;
   'export:frame-ready': (frameData: string) => void;

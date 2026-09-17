@@ -37,6 +37,7 @@ export interface TypographyEffectParams {
 export interface TypographyEffectContext {
   nowMs: number;
   startMs: number;
+  phraseStartMs?: number;
   seed: number;
   index: number;
   intensity: number;
@@ -181,13 +182,20 @@ export class TypographyEffects {
       source.text = originalText;
       return;
     }
-    const elapsed = context.nowMs - (context.startMs - params.shuffleDuration);
-    // 確定文字数を開始・終了で滑らかにし、最後の文字が唐突に切り替わる印象を抑える。
-    const progress = smoothstep(elapsed / Math.max(1, params.shuffleDuration));
+    // フレーズ開始前のコンテナはテンプレート側で非表示にする。
+    // ここでも空文字へ退避し、置換文字や原文が漏れないようにする。
+    if (context.nowMs < (context.phraseStartMs ?? context.startMs)) {
+      source.text = '';
+      return;
+    }
+    // 歌唱前は全文字をシャッフルし、歌唱開始を0msとして原文へ収束させる。
+    // 結果は絶対時刻とseedだけで決まり、シーク順序には依存しない。
+    const convergenceElapsed = context.nowMs - context.startMs;
+    const progress = smoothstep(convergenceElapsed / Math.max(1, params.shuffleDuration));
     source.text = createShuffledText(
       originalText,
       progress,
-      elapsed,
+      context.nowMs,
       params.shuffleRate,
       params.shuffleCharset,
       context.seed + context.index * 1009

@@ -5,27 +5,40 @@ import * as path from 'path';
 import type { ProjectData, MediaFileInfo } from '../shared/types';
 
 export class FileManager {
-  async saveProject(projectData: ProjectData): Promise<string> {
-    const { filePath } = await dialog.showSaveDialog({
-      title: 'Save UTAVISTA Project',
-      defaultPath: `${projectData.name || 'project'}.uta`,
-      filters: [
-        { name: 'UTAVISTA Project', extensions: ['uta'] },
-        { name: 'All Files', extensions: ['*'] }
-      ]
-    });
+  private currentProjectPath: string | null = null;
+  private currentProjectCreatedAt: string | null = null;
+
+  async saveProject(projectData: ProjectData, options: { saveAs?: boolean } = {}): Promise<string> {
+    let filePath = !options.saveAs ? this.currentProjectPath : null;
+    if (!filePath) {
+      const result = await dialog.showSaveDialog({
+        title: options.saveAs ? 'Save UTAVISTA Project As' : 'Save UTAVISTA Project',
+        defaultPath: `${projectData.name || 'project'}.uta`,
+        filters: [
+          { name: 'UTAVISTA Project', extensions: ['uta'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      });
+      filePath = result.filePath || null;
+    }
     
     if (filePath) {
       // Update metadata before saving
+      const createdAt = this.currentProjectCreatedAt || projectData.metadata?.createdAt || new Date().toISOString();
       const updatedProjectData = {
         ...projectData,
+        name: path.basename(filePath, path.extname(filePath)),
         metadata: {
           ...projectData.metadata,
+          projectName: path.basename(filePath, path.extname(filePath)),
+          createdAt,
           modifiedAt: new Date().toISOString()
         }
       };
       
       await fs.writeFile(filePath, JSON.stringify(updatedProjectData, null, 2), 'utf-8');
+      this.currentProjectPath = filePath;
+      this.currentProjectCreatedAt = createdAt;
       return filePath;
     }
     
@@ -69,7 +82,8 @@ export class FileManager {
           name: projectFileData.metadata?.projectName || path.basename(filePaths[0], path.extname(filePaths[0])),
           ...projectFileData
         };
-        
+        this.currentProjectPath = filePaths[0];
+        this.currentProjectCreatedAt = projectData.metadata?.createdAt || null;
         return projectData;
         
       } catch (parseError) {
@@ -82,11 +96,12 @@ export class FileManager {
     throw new Error('Load cancelled by user');
   }
   
-  async selectMediaFile(type: 'video' | 'audio'): Promise<MediaFileInfo> {
+  async selectMediaFile(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo> {
     const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv', '3gp'];
     const audioExtensions = ['mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'wma'];
+    const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'];
     
-    const extensions = type === 'video' ? videoExtensions : audioExtensions;
+    const extensions = type === 'video' ? videoExtensions : type === 'audio' ? audioExtensions : imageExtensions;
     const typeName = type.charAt(0).toUpperCase() + type.slice(1);
     
     const { filePaths } = await dialog.showOpenDialog({
@@ -215,9 +230,9 @@ export class FileManager {
 export function setupFileHandlers() {
   const fileManager = new FileManager();
   
-  ipcMain.handle('file:save-project', async (event, projectData: ProjectData) => {
+  ipcMain.handle('file:save-project', async (event, projectData: ProjectData, options?: { saveAs?: boolean }) => {
     try {
-      return await fileManager.saveProject(projectData);
+      return await fileManager.saveProject(projectData, options);
     } catch (error) {
       console.error('Failed to save project:', error);
       throw error;
@@ -233,7 +248,7 @@ export function setupFileHandlers() {
     }
   });
   
-  ipcMain.handle('file:select-media', async (event, type: 'video' | 'audio') => {
+  ipcMain.handle('file:select-media', async (event, type: 'video' | 'audio' | 'image') => {
     try {
       return await fileManager.selectMediaFile(type);
     } catch (error) {

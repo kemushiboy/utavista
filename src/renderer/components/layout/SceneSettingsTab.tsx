@@ -29,9 +29,19 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
   const [selectedObjectType, setSelectedObjectType] = useState('');
   const [objectParams, setObjectParams] = useState<Record<string, unknown>>(defaults);
 
+  const resolveTargetId = useCallback((objectId: string, objectType: string): string => {
+    if (objectType !== 'char') return objectId;
+    const lyrics = engine?.getTimelineData().lyrics || [];
+    for (const phrase of lyrics) {
+      const parentWord = phrase.words.find(word => word.chars.some(character => character.id === objectId));
+      if (parentWord) return parentWord.id;
+    }
+    return normalizeTargetId(objectId, objectType);
+  }, [engine]);
+
   const targetIds = useMemo(
-    () => Array.from(new Set(selectedObjectIds.map(id => normalizeTargetId(id, selectedObjectType)))),
-    [selectedObjectIds, selectedObjectType]
+    () => Array.from(new Set(selectedObjectIds.map(id => resolveTargetId(id, selectedObjectType)))),
+    [selectedObjectIds, selectedObjectType, resolveTargetId]
   );
 
   const syncGlobalParams = useCallback(() => {
@@ -53,7 +63,7 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
       const detail = (event as CustomEvent).detail || {};
       const ids = detail.objectId ? [detail.objectId] : [];
       const type = detail.objectType || '';
-      const normalized = ids.map(id => normalizeTargetId(id, type));
+      const normalized = ids.map(id => resolveTargetId(id, type));
       setSelectedObjectIds(ids);
       setSelectedObjectType(type);
       syncObjectParams(normalized);
@@ -61,9 +71,11 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
     };
     const handleMultipleSelection = (event: Event) => {
       const detail = (event as CustomEvent).detail || {};
-      const ids = Array.isArray(detail.objectIds) ? detail.objectIds : [];
+      const ids: string[] = Array.isArray(detail.objectIds)
+        ? detail.objectIds.filter((id: unknown): id is string => typeof id === 'string')
+        : [];
       const type = detail.objectType || '';
-      const normalized = Array.from(new Set(ids.map((id: string) => normalizeTargetId(id, type))));
+      const normalized = Array.from(new Set(ids.map((id: string) => resolveTargetId(id, type))));
       setSelectedObjectIds(ids);
       setSelectedObjectType(type);
       syncObjectParams(normalized);
@@ -75,7 +87,7 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
       window.removeEventListener('object-selected', handleSingleSelection);
       window.removeEventListener('objects-selected', handleMultipleSelection);
     };
-  }, [syncObjectParams]);
+  }, [syncObjectParams, resolveTargetId]);
 
   const applyGlobalParams = (next: Record<string, unknown>) => {
     setGlobalParams(next);

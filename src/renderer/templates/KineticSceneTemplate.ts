@@ -196,9 +196,15 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const fontSize = numberParam(params, 'fontSize', 112);
     const intensity = numberParam(params, 'motionIntensity', 1);
     const seed = numberParam(params, 'motionSeed', 2026);
+    const phraseStartMs = numberParam(params, 'phraseStartMs', startMs);
     const phraseEndMs = numberParam(params, 'phraseEndMs', endMs);
     const context: MotionContext = { seed, index, total, intensity };
     const scene = this.resolveScene(params);
+
+    if (nowMs < phraseStartMs) {
+      container.visible = false;
+      return true;
+    }
 
     const spacing = numberParam(params, 'charSpacing', 0.9);
     const layout = scene.layout === 'center'
@@ -208,6 +214,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         : calculateLayout(scene.layout, { ...context, width, height, fontSize, spacing: spacing * 2.2 });
 
     const entranceDuration = numberParam(params, 'entranceDuration', 520);
+    const headTime = numberParam(params, 'headTime', 700);
+    const entranceStartMs = Math.max(phraseStartMs, startMs - headTime);
     const exitDuration = numberParam(params, 'exitDuration', 520);
     const entrance = createEntrance(
       scene.entrance,
@@ -222,13 +230,13 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     );
 
     let motionState;
-    if (nowMs < startMs) {
-      motionState = sampleClip(entrance, nowMs - (startMs - entranceDuration), context);
-    } else if (nowMs > phraseEndMs) {
+    if (nowMs > phraseEndMs) {
       motionState = sampleClip(exit, nowMs - phraseEndMs, context);
+    } else if (nowMs < entranceStartMs + entranceDuration) {
+      motionState = sampleClip(entrance, nowMs - entranceStartMs, context);
     } else {
       const entranceState = sampleClip(entrance, entrance.duration, context);
-      const sustainState = sampleClip(sustain, nowMs - startMs, context);
+      const sustainState = sampleClip(sustain, Math.max(0, nowMs - startMs), context);
       motionState = combineMotionStates(entranceState, sustainState);
     }
 
@@ -249,7 +257,14 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       textObject,
       text,
       this.resolveTypographyEffects(params),
-      { nowMs, startMs, seed, index, intensity }
+      {
+        nowMs,
+        startMs,
+        phraseStartMs: numberParam(params, 'phraseStartMs', startMs),
+        seed,
+        index,
+        intensity
+      }
     );
     this.updateCharacterText(
       container,

@@ -123,6 +123,7 @@ export class Engine {
   // 背景レイヤー関連
   private backgroundLayer: PIXI.Container;
   private backgroundSprite?: PIXI.Sprite;
+  private backgroundImageLoadId = 0;
   private backgroundVideo?: HTMLVideoElement;
   private backgroundVideoSprite?: PIXI.Sprite;
   private backgroundConfig: BackgroundConfig = {
@@ -1687,6 +1688,14 @@ export class Engine {
       this.currentAudioElement.addEventListener('loadedmetadata', applyAudioMetadata, { once: true });
     }
   }
+
+  getAudioFilePath(): string | null {
+    return this.audioFilePath || null;
+  }
+
+  getAudioFileName(): string | null {
+    return this.audioFileName || null;
+  }
   
   // タイムライン更新イベントを発火
   public dispatchTimelineUpdatedEvent() {
@@ -2652,7 +2661,8 @@ export class Engine {
   /**
    * 背景画像を設定
    */
-  setBackgroundImage(imageFilePath: string, fitMode: BackgroundFitMode = 'cover'): void {
+  async setBackgroundImage(imageFilePath: string, fitMode: BackgroundFitMode = 'cover'): Promise<void> {
+    const loadId = ++this.backgroundImageLoadId;
     this.clearBackgroundMedia();
     
     this.backgroundConfig = {
@@ -2662,15 +2672,28 @@ export class Engine {
       backgroundColor: this.backgroundConfig.backgroundColor
     };
     
-    PIXI.Texture.from(imageFilePath).then((texture) => {
+    try {
+      const source = imageFilePath.match(/^[A-Za-z]:[\\/]/)
+        ? `file:///${encodeURI(imageFilePath.replace(/\\/g, '/'))}`
+        : imageFilePath;
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error(`画像をデコードできません: ${source}`));
+        element.src = source;
+      });
+      if (loadId !== this.backgroundImageLoadId) return;
+      const texture = PIXI.Texture.from(image);
       this.backgroundSprite = new PIXI.Sprite(texture);
       this.applyBackgroundFitMode(this.backgroundSprite, fitMode);
       this.backgroundLayer.addChild(this.backgroundSprite);
-    }).catch((error) => {
+      this.backgroundLayer.alpha = this.backgroundConfig.opacity ?? 1;
+    } catch (error) {
       console.error(`Engine: Failed to load background image: ${imageFilePath}`, error);
       // フォールバック: 背景色に戻す
-      this.clearBackgroundMedia();
-    });
+      if (loadId === this.backgroundImageLoadId) this.clearBackgroundMedia();
+      throw error;
+    }
   }
   
   /**
@@ -2746,7 +2769,7 @@ export class Engine {
     
     this.backgroundConfig = {
       type: 'video',
-      videoFilePath: fileName || 'loaded',
+      videoFilePath: video.currentSrc || video.src || fileName || 'loaded',
       fitMode,
       backgroundColor: this.backgroundConfig.backgroundColor,
       videoLoop: loop
@@ -2786,8 +2809,8 @@ export class Engine {
     // 背景スプライトを削除
     if (this.backgroundSprite) {
       this.backgroundLayer.removeChild(this.backgroundSprite);
-      // テクスチャ/ベーステクスチャも含めて確実に破棄
-      this.backgroundSprite.destroy({ children: true, texture: true, baseTexture: true });
+      // 同じ画像を再読込できるよう、Textureを残してSpriteのみ破棄する。
+      this.backgroundSprite.destroy({ children: true });
       this.backgroundSprite = undefined;
     }
     

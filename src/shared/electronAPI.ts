@@ -10,9 +10,9 @@ import type {
 
 export interface ElectronAPI {
   // File management
-  saveProject(projectData: ProjectData): Promise<string>;
+  saveProject(projectData: ProjectData, options?: { saveAs?: boolean }): Promise<string>;
   loadProject(): Promise<ProjectData>;
-  selectMedia(type: 'video' | 'audio'): Promise<MediaFileInfo>;
+  selectMedia(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo>;
   
   // Video export (legacy)
   startExport(options: ExportOptions): Promise<void>;

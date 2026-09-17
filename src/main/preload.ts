@@ -12,13 +12,13 @@ import type {
 // Secure API exposure to renderer process
 const electronAPI = {
   // File management
-  saveProject: (projectData: ProjectData): Promise<string> => 
-    ipcRenderer.invoke('file:save-project', projectData),
+  saveProject: (projectData: ProjectData, options?: { saveAs?: boolean }): Promise<string> =>
+    ipcRenderer.invoke('file:save-project', projectData, options),
   
   loadProject: (): Promise<ProjectData> => 
     ipcRenderer.invoke('file:load-project'),
   
-  selectMedia: (type: 'video' | 'audio'): Promise<MediaFileInfo> => 
+  selectMedia: (type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo> =>
     ipcRenderer.invoke('file:select-media', type),
   
   // Video export (legacy)

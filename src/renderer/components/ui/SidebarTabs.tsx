@@ -23,7 +23,7 @@ const SidebarTabs: React.FC<{
       </Tab.List>
       <Tab.Panels className="tab-panels">
         {children.map((panel, i) => (
-          <Tab.Panel key={i} className="panel-content">{panel}</Tab.Panel>
+          <Tab.Panel key={i} className="sidebar-tab-panel">{panel}</Tab.Panel>
         ))}
       </Tab.Panels>
     </Tab.Group>

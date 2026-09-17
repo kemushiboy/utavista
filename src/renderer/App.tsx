@@ -8,6 +8,7 @@ import { initializeLogging } from '../config/logging';
 import testLyricsData from './data/longTestLyrics.json';
 import { ParameterProcessor } from './utils/ParameterProcessor';
 import { ParameterRegistry } from './utils/ParameterRegistry';
+import { ProjectFileManager } from './services/ProjectFileManager';
 import './App.css';
 
 // Initialize logging configuration
@@ -152,7 +153,19 @@ function App() {
     // キーボードショートカットのハンドラ
     const handleKeyDown = (event: KeyboardEvent) => {
       // Ctrl+Z: Undo
-      if (event.ctrlKey && event.key === 'z' && !event.shiftKey) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        if (event.repeat) return;
+        const engine = engineRef.current;
+        if (engine) {
+          const saveAs = event.shiftKey;
+          void new ProjectFileManager(engine).saveProject('project', saveAs)
+            .then(filePath => window.dispatchEvent(new CustomEvent('project-save-completed', { detail: { filePath } })))
+            .catch(error => window.dispatchEvent(new CustomEvent('project-save-failed', { detail: { error } })));
+        }
+      }
+      // Ctrl+Z: Undo
+      else if (event.ctrlKey && event.key === 'z' && !event.shiftKey) {
         event.preventDefault();
         if (engineRef.current) {
           const success = engineRef.current.undo();

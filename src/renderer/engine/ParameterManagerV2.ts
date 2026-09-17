@@ -265,13 +265,20 @@ export class ParameterManagerV2 {
         templateIdForValidation = this.templateManager.getAssignment(phraseId) || '';
       } catch {}
     }
-    const validation = ParameterValidator.validate(updates, templateIdForValidation as any);
+    if (!templateIdForValidation) templateIdForValidation = this.defaultTemplateId;
+    const normalizedUpdates = ParameterProcessor.validateParameterObject(updates as Record<string, any>);
+    const validation = ParameterValidator.validate(normalizedUpdates, templateIdForValidation as any);
     if (!validation.isValid) {
       console.warn('Parameter validation errors:', validation.errors);
     }
     
     // 更新を適用
-    Object.assign(params, validation.sanitized);
+    // KineticSceneTemplateの項目は動的なテンプレート定義が正であり、
+    // 旧ParameterRegistryに未登録でも選択オブジェクトへ適用できるようにする。
+    const applicableUpdates = Object.fromEntries(
+      Object.entries(normalizedUpdates).filter(([, value]) => value !== undefined)
+    );
+    Object.assign(params, applicableUpdates);
     
     if (import.meta.env.DEV && Math.random() < 0.01) { // 1%の確率でのみ出力
     }

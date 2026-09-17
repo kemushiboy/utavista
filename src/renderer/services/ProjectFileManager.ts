@@ -1,4 +1,4 @@
-import { PhraseUnit } from '../types/types';
+import { BackgroundConfig, PhraseUnit, StageConfig } from '../types/types';
 import { ProjectState } from '../engine/ProjectStateManager';
 import { unifiedFileManager } from './UnifiedFileManager';
 import { Engine } from '../engine/Engine';
@@ -19,6 +19,7 @@ export interface ProjectMetadata {
 export interface AudioReference {
   fileName: string;
   duration: number;
+  filePath?: string;
 }
 
 // プロジェクトファイルデータ構造
@@ -31,6 +32,8 @@ export interface ProjectFileData {
   globalParams: Record<string, any>;
   objectParams: Record<string, Record<string, any>>;
   backgroundColor?: string;
+  backgroundConfig?: BackgroundConfig;
+  stageConfig?: StageConfig;
   // 個別設定情報
   individualSettingsEnabled?: string[];
   // 後方互換性のため（読み込み時のみ使用）
@@ -82,7 +85,8 @@ export class ProjectFileManager {
     if (!validation.isValid) {
       console.warn('Parameter normalization warnings:', validation.errors);
     }
-    return validation.sanitized;
+    // 固定KineticSceneテンプレートの動的項目は旧レジストリ外でも保存対象にする。
+    return normalizedParams as StandardParameters;
   }
   
   /**
@@ -111,6 +115,8 @@ export class ProjectFileManager {
       templateAssignments: {},  // 新しい形式ではobjectParamsにtemplateIdが含まれる
       objectParams: projectData.objectParams,
       backgroundColor: projectData.backgroundColor,
+      backgroundConfig: projectData.backgroundConfig,
+      stageConfig: projectData.stageConfig,
       audioFileName: projectData.audio.fileName,
       audioFileDuration: projectData.audio.duration,
       individualSettingsEnabled: projectData.individualSettingsEnabled || []
@@ -144,6 +150,10 @@ export class ProjectFileManager {
     if (projectData.backgroundColor) {
       this.engine.setBackgroundColor(projectData.backgroundColor);
     }
+    if (projectData.stageConfig) {
+      this.engine.resizeStage(projectData.stageConfig.aspectRatio, projectData.stageConfig.orientation);
+    }
+    await this.restoreProjectMedia(projectData);
     
     // 音楽ファイル要求イベントを発行
     DebugEventBus.emit('request-audio-file', {
@@ -187,14 +197,14 @@ export class ProjectFileManager {
    * プロジェクトをファイルに保存（エレクトロン専用）
    * @param fileName ファイル名（拡張子なし）
    */
-  async saveProject(fileName: string): Promise<string> {
+  async saveProject(fileName: string = 'project', saveAs: boolean = false): Promise<string> {
     try {
       // プロジェクトデータを構築
       const projectData = this.buildProjectData(fileName);
       
     
       // エレクトロンのファイル保存APIを使用
-      const filePath = await unifiedFileManager.saveProject(projectData);
+      const filePath = await unifiedFileManager.saveProject(projectData as any, { saveAs });
       
       // 保存成功時に自動保存データをクリア
       await this.engine.clearAutoSave();
@@ -240,6 +250,8 @@ export class ProjectFileManager {
         templateAssignments: {},  // 新しい形式ではobjectParamsにtemplateIdが含まれる
         objectParams: projectData.objectParams,
         backgroundColor: projectData.backgroundColor,
+        backgroundConfig: projectData.backgroundConfig,
+        stageConfig: projectData.stageConfig,
         audioFileName: projectData.audio.fileName,
         audioFileDuration: projectData.audio.duration,
         individualSettingsEnabled: projectData.individualSettingsEnabled || []
@@ -285,6 +297,10 @@ export class ProjectFileManager {
       if (projectData.backgroundColor) {
         this.engine.setBackgroundColor(projectData.backgroundColor);
       }
+      if (projectData.stageConfig) {
+        this.engine.resizeStage(projectData.stageConfig.aspectRatio, projectData.stageConfig.orientation);
+      }
+      await this.restoreProjectMedia(projectData);
       
       // 音楽ファイルの再読み込みを促す
       if (projectData.audio.fileName) {
@@ -489,13 +505,16 @@ export class ProjectFileManager {
       },
       audio: {
         fileName: state.audioFileName || '',
-        duration: state.audioFileDuration || 0
+        duration: state.audioFileDuration || 0,
+        filePath: this.engine.getAudioFilePath() || undefined
       },
       lyricsData: engineLyrics || state.lyricsData || [], // Engineから直接取得を優先
       globalTemplateId: globalTemplateId,
       globalParams: this.normalizeParameters(this.engine.getParameterManager().getGlobalDefaults()),
       objectParams: enhancedObjectParams,
       backgroundColor: state.backgroundColor,
+      backgroundConfig: this.engine.getBackgroundConfig(),
+      stageConfig: this.engine.getStageConfig(),
       individualSettingsEnabled: this.engine.getParameterManager().getIndividualSettingsEnabled() // V2統一管理で個別設定リストを取得
     };
     
@@ -503,6 +522,58 @@ export class ProjectFileManager {
     (projectData as any).parameterData = parameterData;
     
     return projectData;
+  }
+
+  private async restoreProjectMedia(projectData: ProjectFileData): Promise<void> {
+    const background = projectData.backgroundConfig;
+    if (background?.type === 'image' && background.imageFilePath) {
+      try {
+        await this.engine.setBackgroundImage(background.imageFilePath, background.fitMode || 'cover');
+        if (background.opacity !== undefined) this.engine.updateBackgroundConfig({ opacity: background.opacity });
+      } catch (error) {
+        console.warn('背景画像の復元に失敗しました:', error);
+      }
+    } else if (background?.type === 'video' && background.videoFilePath) {
+      try {
+        const { electronMediaManager } = await import('./ElectronMediaManager');
+        let rawPath = background.videoFilePath;
+        if (rawPath.startsWith('file://')) {
+          try {
+            rawPath = decodeURIComponent(new URL(rawPath).pathname).replace(/^\/([A-Za-z]:)/, '$1');
+          } catch {
+            rawPath = decodeURI(rawPath.replace(/^file:\/\/\/?/, '')).replace(/^\/([A-Za-z]:)/, '$1');
+          }
+        }
+        const restored = await electronMediaManager.restoreBackgroundVideo(
+          rawPath.split(/[/\\]/).pop() || 'background-video',
+          rawPath
+        );
+        if (restored) {
+          this.engine.setBackgroundVideoElement(
+            restored.video,
+            background.fitMode || 'cover',
+            restored.fileName,
+            background.videoLoop || false
+          );
+          if (background.opacity !== undefined) this.engine.updateBackgroundConfig({ opacity: background.opacity });
+        }
+      } catch (error) {
+        console.warn('背景動画の復元に失敗しました:', error);
+      }
+    }
+
+    if (projectData.audio.fileName) {
+      try {
+        const { electronMediaManager } = await import('./ElectronMediaManager');
+        const restored = await electronMediaManager.restoreAudioFile(
+          projectData.audio.fileName,
+          projectData.audio.filePath
+        );
+        if (restored) this.engine.loadAudioElement(restored.audio, restored.fileName);
+      } catch (error) {
+        console.warn('音楽ファイルの復元に失敗しました:', error);
+      }
+    }
   }
   
   /**

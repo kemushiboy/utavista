@@ -21,6 +21,9 @@ export class WebCodecsLockstepExporter {
   private electronAPI = getElectronAPI();
   private cancelled = false;
   private encoder: any = null;
+  private encoderError: Error | null = null;
+  private pendingChunkWrites = new Set<Promise<void>>();
+  private activeSessionId: string | null = null;
   private supportsCanvasVideoFrame = false;
 
   constructor(engine: Engine) {
@@ -45,7 +48,10 @@ export class WebCodecsLockstepExporter {
     }
 
     this.cancelled = false;
+    this.encoderError = null;
+    this.pendingChunkWrites.clear();
     const sessionId = options.sessionId || crypto.randomUUID();
+    this.activeSessionId = sessionId;
     const { fps, width, height, startTime, endTime } = options;
 
     // Ensure engine is paused to prevent any runtime playback side-effects
@@ -71,10 +77,23 @@ export class WebCodecsLockstepExporter {
 
     // Configure encoder
     const encoder = new (window as any).VideoEncoder({
-      output: (chunk: any) => this.handleChunk(sessionId, chunk),
-      error: (e: any) => console.error('[WebCodecs] encoder error:', e)
+      output: (chunk: any) => {
+        const write = this.handleChunk(sessionId, chunk)
+          .catch(error => {
+            this.encoderError = error instanceof Error ? error : new Error(String(error));
+          })
+          .finally(() => this.pendingChunkWrites.delete(write));
+        this.pendingChunkWrites.add(write);
+      },
+      error: (error: unknown) => {
+        this.encoderError = error instanceof Error ? error : new Error(String(error));
+        console.error('[WebCodecs] encoder error:', error);
+      }
     });
     this.encoder = encoder;
+    let unsubscribe: (() => void) | undefined;
+
+    try {
 
     // Choose codec level based on resolution; fallback to higher level if needed
     const baseConfig: any = {
@@ -118,7 +137,7 @@ export class WebCodecsLockstepExporter {
     if (!canvas) throw new Error('Engine canvas not available');
 
     // Bridge progress from main process (bg prep + mux)
-    const unsubscribe = this.electronAPI.onExportProgress((evt: any) => {
+    unsubscribe = this.electronAPI.onExportProgress((evt: any) => {
       try {
         if (!onProgress) return;
         if (!evt || evt.sessionId !== sessionId) return; // Filter by session
@@ -218,6 +237,7 @@ export class WebCodecsLockstepExporter {
           bmp = await (canvas as any).transferToImageBitmap();
           vf = new (window as any).VideoFrame(bmp, { timestamp: n * dt_us });
         }
+        this.assertEncoderReady(encoder);
         encoder.encode(vf, { keyFrame: (n % GOP) === 0 });
       } finally {
         try { vf?.close?.(); } catch {}
@@ -226,6 +246,7 @@ export class WebCodecsLockstepExporter {
 
       // Backpressure: avoid frequent flush; just yield if queue is large
       while (!this.cancelled && encoder.encodeQueueSize > 2) {
+        this.assertEncoderReady(encoder);
         await new Promise(r => setTimeout(r, 0));
       }
 
@@ -246,15 +267,40 @@ export class WebCodecsLockstepExporter {
       }
     }
 
+    this.assertEncoderReady(encoder);
     await encoder.flush();
+    await Promise.all(Array.from(this.pendingChunkWrites));
+    this.assertEncoderReady(encoder);
     const outPath = await this.electronAPI.webcodecsFinalize({ sessionId });
-    try { unsubscribe?.(); } catch {}
     return outPath;
+    } catch (error) {
+      try { await this.electronAPI.webcodecsCancel({ sessionId }); } catch {}
+      throw error;
+    } finally {
+      try { unsubscribe?.(); } catch {}
+      await Promise.allSettled(Array.from(this.pendingChunkWrites));
+      try {
+        if (encoder.state !== 'closed') encoder.close();
+      } catch {}
+      if (this.encoder === encoder) this.encoder = null;
+      if (this.activeSessionId === sessionId) this.activeSessionId = null;
+    }
   }
 
   cancel() {
     this.cancelled = true;
-    try { this.encoder?.close?.(); } catch {}
+    // encode中にcodecを閉じると次フレームとの競合になるため、ループ側で安全に停止する。
+    if (this.activeSessionId) {
+      void this.electronAPI.webcodecsCancel({ sessionId: this.activeSessionId }).catch(() => undefined);
+    }
+  }
+
+  private assertEncoderReady(encoder: any): void {
+    if (this.cancelled) throw new Error('Export cancelled');
+    if (this.encoderError) throw this.encoderError;
+    if (encoder.state !== 'configured') {
+      throw new Error(`VideoEncoder stopped unexpectedly (state: ${encoder.state})`);
+    }
   }
 
   private async handleChunk(sessionId: string, chunk: any) {
