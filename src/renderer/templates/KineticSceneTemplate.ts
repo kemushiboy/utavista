@@ -79,7 +79,6 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'activeTextColor', type: 'color', default: '#FFFFFF', label: '発声中色' },
       { name: 'completedTextColor', type: 'color', default: '#A8FF60', label: '発声後色' },
       { name: 'headTime', type: 'number', default: 700, min: 0, max: 3000, step: 50, label: '先行表示時間' },
-      { name: 'tailTime', type: 'number', default: 650, min: 0, max: 3000, step: 50, label: '残留時間' },
       { name: 'phraseOffsetX', type: 'number', default: 0, min: -900, max: 900, step: 5, label: '場面X位置' },
       { name: 'phraseOffsetY', type: 'number', default: 0, min: -500, max: 500, step: 5, label: '場面Y位置' },
       { name: 'charSpacing', type: 'number', default: 0.9, min: 0.35, max: 3, step: 0.05, label: '単語間隔' },
@@ -229,16 +228,20 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       stringParam(params, 'exitEasing', 'auto') as EasingSelection
     );
 
-    let motionState;
+    let phaseState;
     if (nowMs > phraseEndMs) {
-      motionState = sampleClip(exit, nowMs - phraseEndMs, context);
+      phaseState = sampleClip(exit, nowMs - phraseEndMs, context);
     } else if (nowMs < entranceStartMs + entranceDuration) {
-      motionState = sampleClip(entrance, nowMs - entranceStartMs, context);
+      phaseState = sampleClip(entrance, nowMs - entranceStartMs, context);
     } else {
-      const entranceState = sampleClip(entrance, entrance.duration, context);
-      const sustainState = sampleClip(sustain, Math.max(0, nowMs - startMs), context);
-      motionState = combineMotionStates(entranceState, sustainState);
+      phaseState = sampleClip(entrance, entrance.duration, context);
     }
+
+    // 継続モーションは表示開始から消失完了まで位相を維持する。
+    // 座標・回転は加算、スケール・透明度は乗算されるため、出現／消失の
+    // フェードや変形を上書きせずに合成できる。
+    const sustainState = sampleClip(sustain, nowMs - entranceStartMs, context);
+    const motionState = combineMotionStates(phaseState, sustainState);
 
     container.position.set(layout.x + motionState.x, layout.y + motionState.y);
     container.scale.set(layout.scale * motionState.scaleX, layout.scale * motionState.scaleY);

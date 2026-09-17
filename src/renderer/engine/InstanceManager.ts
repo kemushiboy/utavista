@@ -474,9 +474,9 @@ export class InstanceManager {
     this.activeInstances.clear();
     let activeCount = 0;
     
-    // ヘッドタイムとテールタイムの最大値を取得
+    // 先行表示時間と消失時間の既定値を取得
     const maxHeadTime = this.getMaxHeadTime();
-    const maxTailTime = this.getMaxTailTime();
+    const maxExitDuration = this.getMaxExitDuration();
     
     try {
       // 単語レベルの処理状況を確認
@@ -490,7 +490,7 @@ export class InstanceManager {
           instance.container.visible = false;
           return;
         }
-        if (this.isInstanceInTimeRange(instance, nowMs, maxHeadTime, maxTailTime)) {
+        if (this.isInstanceInTimeRange(instance, nowMs, maxHeadTime, maxExitDuration)) {
           instance.update(nowMs);
           this.activeInstances.add(instance.id);
           activeCount++;
@@ -502,7 +502,7 @@ export class InstanceManager {
       // 次に単語レベルの更新
       this.wordInstances.forEach(instance => {
         wordProcessed++;
-        if (this.isInstanceInTimeRange(instance, nowMs, maxHeadTime, maxTailTime)) {
+        if (this.isInstanceInTimeRange(instance, nowMs, maxHeadTime, maxExitDuration)) {
           const result = instance.update(nowMs);
           wordActive++;
           this.activeInstances.add(instance.id);
@@ -516,7 +516,7 @@ export class InstanceManager {
       
       // 最後にフレーズレベルの更新
       this.phraseInstances.forEach(instance => {
-        if (this.isInstanceInTimeRange(instance, nowMs, maxHeadTime, maxTailTime)) {
+        if (this.isInstanceInTimeRange(instance, nowMs, maxHeadTime, maxExitDuration)) {
           instance.update(nowMs);
           this.activeInstances.add(instance.id);
           activeCount++;
@@ -540,17 +540,14 @@ export class InstanceManager {
     instance: AnimationInstance,
     nowMs: number,
     maxHeadTime: number,
-    maxTailTime: number
+    maxExitDuration: number
   ): boolean {
-    // パラメータから個別のヘッドタイムとテールタイムを取得
+    // 表示期間は先行表示時間と消失時間だけで決定する。
     const headTime = instance.params.headTime !== undefined ? instance.params.headTime : maxHeadTime;
-    const tailTime = instance.params.tailTime !== undefined ? instance.params.tailTime : maxTailTime;
-    // 消失モーションを途中で打ち切らない。残留時間が消失時間より短い場合でも、
-    // 少なくともモーションクリップの終端まではインスタンスを更新し続ける。
     const configuredExitDuration = Number(instance.params.exitDuration);
-    const visibleTailTime = Number.isFinite(configuredExitDuration)
-      ? Math.max(tailTime, configuredExitDuration)
-      : tailTime;
+    const exitDuration = Number.isFinite(configuredExitDuration)
+      ? Math.max(0, configuredExitDuration)
+      : maxExitDuration;
 
     // 単語は個別の開始時刻からheadTimeだけ先行して表示する。
     // ただしフレーズ開始前には一切表示しない。
@@ -559,17 +556,17 @@ export class InstanceManager {
 
     if (instance.hierarchyType === 'word' && hasPhraseRange) {
       const visibleStartMs = Math.max(instance.params.phraseStartMs, instance.startMs - headTime);
-      return nowMs >= visibleStartMs && nowMs <= instance.params.phraseEndMs + visibleTailTime;
+      return nowMs >= visibleStartMs && nowMs <= instance.params.phraseEndMs + exitDuration;
     }
     
     // 文字コンテナの場合もフレーズの時間範囲を使用
     if (instance.hierarchyType === 'char' && hasPhraseRange) {
       // 文字コンテナもフレーズの時間範囲に依存して表示される
-      return nowMs >= instance.params.phraseStartMs - headTime && nowMs <= instance.params.phraseEndMs + visibleTailTime;
+      return nowMs >= instance.params.phraseStartMs - headTime && nowMs <= instance.params.phraseEndMs + exitDuration;
     }
     
     // フレーズコンテナの場合、自身の時間範囲を使用
-    return nowMs >= instance.startMs - headTime && nowMs <= instance.endMs + visibleTailTime;
+    return nowMs >= instance.startMs - headTime && nowMs <= instance.endMs + exitDuration;
   }
   
   // テンプレートメタデータからヘッドタイムの最大値を取得
@@ -589,21 +586,21 @@ export class InstanceManager {
     return maxHeadTime;
   }
   
-  // テンプレートメタデータからテールタイムの最大値を取得
-  private getMaxTailTime(): number {
-    let maxTailTime = 500;  // デフォルト値
+  // テンプレートメタデータから消失時間の既定値を取得
+  private getMaxExitDuration(): number {
+    let maxExitDuration = 500;
     
     if (typeof this.template.getParameterConfig === 'function') {
       const params = this.template.getParameterConfig();
-      const tailTimeParam = params.find(p => p.name === 'tailTime');
-      if (tailTimeParam && tailTimeParam.default !== undefined) {
-        maxTailTime = tailTimeParam.default;
+      const exitDurationParam = params.find(p => p.name === 'exitDuration');
+      if (exitDurationParam && exitDurationParam.default !== undefined) {
+        maxExitDuration = exitDurationParam.default;
       }
     } else {
       throw new Error(`Template ${this.template.constructor.name} must implement getParameterConfig() method`);
     }
     
-    return maxTailTime;
+    return maxExitDuration;
   }
 
   // インスタンスの位置を更新

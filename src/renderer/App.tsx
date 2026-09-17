@@ -50,6 +50,11 @@ interface TimingDebugInfo {
   }[];
 }
 
+interface ProjectSaveNotice {
+  type: 'saving' | 'success' | 'error';
+  message: string;
+}
+
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -68,6 +73,9 @@ function App() {
   const animationFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
   const frameCountRef = useRef<number>(0);
+  const saveInProgressRef = useRef(false);
+  const saveNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [projectSaveNotice, setProjectSaveNotice] = useState<ProjectSaveNotice | null>(null);
   
   // Electron APIの状態を確認
   useEffect(() => {
@@ -152,16 +160,34 @@ function App() {
     
     // キーボードショートカットのハンドラ
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Ctrl+Z: Undo
+      // Ctrl/Cmd+S: どの編集UIにフォーカスがあってもプロジェクトを保存する。
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        if (event.repeat) return;
+        event.stopPropagation();
+        if (event.repeat || saveInProgressRef.current) return;
         const engine = engineRef.current;
         if (engine) {
           const saveAs = event.shiftKey;
+          saveInProgressRef.current = true;
+          if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current);
+          setProjectSaveNotice({ type: 'saving', message: saveAs ? '別名で保存中…' : '保存中…' });
           void new ProjectFileManager(engine).saveProject('project', saveAs)
-            .then(filePath => window.dispatchEvent(new CustomEvent('project-save-completed', { detail: { filePath } })))
-            .catch(error => window.dispatchEvent(new CustomEvent('project-save-failed', { detail: { error } })));
+            .then(filePath => {
+              setProjectSaveNotice({ type: 'success', message: 'プロジェクトを保存しました' });
+              window.dispatchEvent(new CustomEvent('project-save-completed', { detail: { filePath } }));
+            })
+            .catch(error => {
+              setProjectSaveNotice({ type: 'error', message: 'プロジェクトの保存に失敗しました' });
+              window.dispatchEvent(new CustomEvent('project-save-failed', { detail: { error } }));
+            })
+            .finally(() => {
+              saveInProgressRef.current = false;
+              saveNoticeTimerRef.current = setTimeout(() => setProjectSaveNotice(null), 3000);
+            });
+        } else {
+          setProjectSaveNotice({ type: 'error', message: 'エンジンの準備完了後に保存してください' });
+          if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current);
+          saveNoticeTimerRef.current = setTimeout(() => setProjectSaveNotice(null), 3000);
         }
       }
       // Ctrl+Z: Undo
@@ -244,7 +270,7 @@ function App() {
     window.addEventListener('timeline-ended', handleTimelineEnded as EventListener);
     window.addEventListener('audio-ended', handleAudioEnded as EventListener);
     window.addEventListener('audio-playback-error', handleAudioPlaybackError as EventListener);
-    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown, true);
     window.addEventListener('templateRegistryChanged', handleTemplateRegistryChanged as EventListener);
 
     // クリーンアップ
@@ -258,8 +284,9 @@ function App() {
       window.removeEventListener('timeline-ended', handleTimelineEnded as EventListener);
       window.removeEventListener('audio-ended', handleAudioEnded as EventListener);
       window.removeEventListener('audio-playback-error', handleAudioPlaybackError as EventListener);
-      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keydown', handleKeyDown, true);
       window.removeEventListener('templateRegistryChanged', handleTemplateRegistryChanged as EventListener);
+      if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current);
     };
   }, []); // 一度だけ登録し、イベントハンドラ内で最新のstateを参照する方式に変更
 
@@ -789,6 +816,12 @@ function App() {
         debugInfo={debugInfo}
         timingDebugInfo={timingDebugInfo}
       />
+
+      {projectSaveNotice && (
+        <div className={`project-save-notice ${projectSaveNotice.type}`} role="status" aria-live="polite">
+          {projectSaveNotice.message}
+        </div>
+      )}
 
       {/* エンジン初期化中はローディングオーバーレイを表示 */}
       {!engineReady && (

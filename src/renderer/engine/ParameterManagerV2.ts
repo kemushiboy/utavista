@@ -69,7 +69,14 @@ export class ParameterManagerV2 {
    */
   private createDefaultParameters(): CompleteParameters {
     // すべてのオプショナルパラメータも含めて完全な型として返す
-    return { ...DEFAULT_PARAMETERS } as CompleteParameters;
+    return this.removeDeprecatedParameters({ ...DEFAULT_PARAMETERS }) as CompleteParameters;
+  }
+
+  /** 旧プロジェクトに残る、固定コンポーザーでは使わないパラメータを破棄する。 */
+  private removeDeprecatedParameters<T extends Record<string, any>>(params: T): T {
+    const sanitized = { ...params };
+    delete sanitized.tailTime;
+    return sanitized;
   }
   
   /**
@@ -202,6 +209,8 @@ export class ParameterManagerV2 {
     paramName: keyof StandardParameters,
     value: unknown
   ): void {
+    if (paramName === 'tailTime') return;
+
     const phraseId = this.extractPhraseId(objectId);
     let params = this.phraseParameters.get(phraseId);
     if (!params) {
@@ -266,7 +275,9 @@ export class ParameterManagerV2 {
       } catch {}
     }
     if (!templateIdForValidation) templateIdForValidation = this.defaultTemplateId;
-    const normalizedUpdates = ParameterProcessor.validateParameterObject(updates as Record<string, any>);
+    const normalizedUpdates = this.removeDeprecatedParameters(
+      ParameterProcessor.validateParameterObject(updates as Record<string, any>)
+    );
     const validation = ParameterValidator.validate(normalizedUpdates, templateIdForValidation as any);
     if (!validation.isValid) {
       console.warn('Parameter validation errors:', validation.errors);
@@ -377,7 +388,9 @@ export class ParameterManagerV2 {
     // });
     
     // 型安全な正規化（配列が来ることは設計上あり得ない）
-    const normalizedUpdates = ParameterProcessor.validateParameterObject(updates as Record<string, any>);
+    const normalizedUpdates = this.removeDeprecatedParameters(
+      ParameterProcessor.validateParameterObject(updates as Record<string, any>)
+    );
     
     const validation = ParameterValidator.validate(normalizedUpdates);
     if (!validation.isValid) {
@@ -547,9 +560,9 @@ export class ParameterManagerV2 {
       // 重要: 個別設定フレーズは完全なスナップショットを保存してグローバル変更の影響を遮断
       let diff: Partial<StandardParameters>;
       if (isIndividual) {
-        diff = JSON.parse(JSON.stringify(params));
+        diff = this.removeDeprecatedParameters(JSON.parse(JSON.stringify(params)));
       } else {
-        diff = this.calculateDiff(this.globalDefaults, params);
+        diff = this.removeDeprecatedParameters(this.calculateDiff(this.globalDefaults, params));
       }
       
       // 開発時のみログ出力（高頻度なので通常は抑制）
@@ -565,7 +578,7 @@ export class ParameterManagerV2 {
     
     return {
       version: "2.0",
-      globalDefaults: this.globalDefaults,
+      globalDefaults: this.removeDeprecatedParameters(this.globalDefaults),
       phrases: compressed
     };
   }
@@ -576,7 +589,9 @@ export class ParameterManagerV2 {
   importCompressed(data: CompressedProjectData): void {
     
     // グローバルデフォルトを安全に設定
-    const normalizedGlobalDefaults = ParameterProcessor.normalizeToParameterObject(data.globalDefaults);
+    const normalizedGlobalDefaults = this.removeDeprecatedParameters(
+      ParameterProcessor.normalizeToParameterObject(data.globalDefaults)
+    );
     this.globalDefaults = ParameterProcessor.mergeParameterObjects(
       this.createDefaultParameters(), 
       normalizedGlobalDefaults
@@ -604,22 +619,26 @@ export class ParameterManagerV2 {
       // ベースパラメータを作成
       let params: CompleteParameters;
       
-      if (isIndividualEnabled && compressedPhrase.parameterDiff) {
+      const parameterDiff = compressedPhrase.parameterDiff
+        ? this.removeDeprecatedParameters(compressedPhrase.parameterDiff)
+        : undefined;
+
+      if (isIndividualEnabled && parameterDiff) {
         // 個別設定が有効な場合：保存時のスナップショット優先
         // 後方互換のため、差分形式（旧データ）もサポート
-        const diffKeys = Object.keys(compressedPhrase.parameterDiff);
+        const diffKeys = Object.keys(parameterDiff);
         const totalKeys = Object.keys(this.globalDefaults).length || 1;
         const looksLikeSnapshot = diffKeys.length > totalKeys / 2; // 大半のキーを含む場合はスナップショットと判断
 
         if (looksLikeSnapshot) {
           // スナップショットとしてそのまま使用（独立性を保証）
           params = { ...this.createDefaultParameters() };
-          Object.assign(params, compressedPhrase.parameterDiff);
+          Object.assign(params, parameterDiff);
         } else {
           // 旧形式の差分として扱い、当時のグローバル相当（現行globalDefaults）に上書き
           // これにより過去データも破綻せず読み込める
           params = { ...this.globalDefaults };
-          Object.assign(params, compressedPhrase.parameterDiff);
+          Object.assign(params, parameterDiff);
         }
       } else {
         // 個別設定が無効な場合：正しい優先順位で適用
@@ -636,8 +655,8 @@ export class ParameterManagerV2 {
         Object.assign(params, this.globalDefaults);
         
         // 4. 差分があれば適用（個別調整）
-        if (compressedPhrase.parameterDiff) {
-          Object.assign(params, compressedPhrase.parameterDiff);
+        if (parameterDiff) {
+          Object.assign(params, parameterDiff);
         }
         
       }
