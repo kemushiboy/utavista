@@ -26,7 +26,25 @@ export interface FontStyle {
   weight: string;
   fullName: string;
   displayName: string;
+  variable: boolean;
 }
+
+export interface FontWeightOption {
+  value: string;
+  label: string;
+}
+
+const VARIABLE_WEIGHT_OPTIONS: FontWeightOption[] = [
+  { value: '100', label: 'Thin (100)' },
+  { value: '200', label: 'Extra Light (200)' },
+  { value: '300', label: 'Light (300)' },
+  { value: '400', label: 'Regular (400)' },
+  { value: '500', label: 'Medium (500)' },
+  { value: '600', label: 'Semi Bold (600)' },
+  { value: '700', label: 'Bold (700)' },
+  { value: '800', label: 'Extra Bold (800)' },
+  { value: '900', label: 'Black (900)' }
+];
 
 export class FontService {
   private static systemFonts: string[] = [];
@@ -184,7 +202,8 @@ export class FontService {
           style: font.style || 'Regular',
           weight: font.weight || 'Normal',
           fullName: font.fullName || font.family,
-          displayName: this.createDisplayName(font.style, font.weight)
+          displayName: this.createDisplayName(font.style, font.weight),
+          variable: this.isVariableFont(font)
         }));
 
         // スタイルを重複除去してソート
@@ -224,13 +243,32 @@ export class FontService {
       style: font.style || 'Regular',
       weight: font.weight || 'Normal',
       fullName: font.fullName || font.family,
-      displayName: this.createDisplayName(font.style, font.weight)
+      displayName: this.createDisplayName(font.style, font.weight),
+      variable: this.isVariableFont(font)
     }));
 
     // スタイルを重複除去してソート
     return styles.filter((style, index, self) => 
       index === self.findIndex(s => s.fullName === style.fullName)
     ).sort((a, b) => this.compareStyles(a, b));
+  }
+
+  static getFontWeightOptions(fontFamily: string): FontWeightOption[] {
+    const variants = this.fontFamilyMap.get(fontFamily) || [];
+    if (variants.some(font => this.isVariableFont(font))) {
+      return VARIABLE_WEIGHT_OPTIONS;
+    }
+
+    const options = variants.map(font => {
+      const value = this.normalizeFontWeight(font.weight, font.style);
+      return {
+        value,
+        label: `${this.createDisplayName(font.style, font.weight)} (${value})`
+      };
+    });
+    return options.filter((option, index, all) =>
+      index === all.findIndex(candidate => candidate.value === option.value)
+    ).sort((a, b) => Number(a.value) - Number(b.value));
   }
 
   /**
@@ -429,7 +467,7 @@ export class FontService {
    * @param fontFamily フォントファミリー名
    * @returns フォント読み込み完了のPromise
    */
-  static async ensureFontLoaded(fontFamily: string): Promise<void> {
+  static async ensureFontLoaded(fontFamily: string, fontWeight?: string): Promise<void> {
     if (!this.initialized) {
       console.warn('[FontService] フォントサービスが未初期化のため、フォント確保をスキップします');
       return;
@@ -440,12 +478,16 @@ export class FontService {
       console.warn(`[FontService] フォント ${fontFamily} はシステムに存在しません`);
       return;
     }
-    if (FontLoader.isLoaded(resolvedFamily)) {
+    if (!fontWeight && FontLoader.isLoaded(resolvedFamily)) {
       return;
     }
     try {
       const variants = this.fontFamilyMap.get(resolvedFamily) || [];
-      const preferred = variants.find(font => font.style === 'Regular' && font.path)
+      const preferred = variants.find(font => this.isVariableFont(font) && font.path)
+        || variants.find(font => fontWeight
+          && this.normalizeFontWeight(font.weight, font.style) === fontWeight
+          && font.path)
+        || variants.find(font => font.style === 'Regular' && font.path)
         || variants.find(font => font.path);
       // Web-safeフォントなどパスを持たないものはChromiumのネイティブ解決に任せる。
       if (preferred) {
@@ -483,8 +525,22 @@ export class FontService {
   private static normalizeComparableFontName(fontName: string): string {
     return fontName
       .replace(/[-_\s]*VariableFont[-_\s]*(?:[A-Za-z]+(?:[,\s_-]+[A-Za-z]+)*)?$/i, '')
+      .replace(/[-_\s]*\[[^\]]*wght[^\]]*\]$/i, '')
       .replace(/[-_\s]+/g, '')
       .toLowerCase();
+  }
+
+  private static isVariableFont(font: FontInfo): boolean {
+    return font.variable === true
+      || /variablefont|(?:^|[_-])wght(?:[_,-]|$)|\[.*wght.*\]/i.test(font.path || font.fullName || '');
+  }
+
+  private static normalizeFontWeight(weight?: string, style?: string): string {
+    const normalized = (weight || '').toLowerCase();
+    if (/^[1-9]00$/.test(normalized)) return normalized;
+    if (normalized === 'bold' || /bold|heavy|black/i.test(style || '')) return '700';
+    if (normalized === 'lighter' || /light|thin/i.test(style || '')) return '300';
+    return '400';
   }
 }
 

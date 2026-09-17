@@ -75,6 +75,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         get options() { return FontService.getFontFamilies(); },
         label: 'フォント'
       },
+      { name: 'fontWeight', type: 'string', default: '700', label: '書体' },
       { name: 'textColor', type: 'color', default: '#F3F0E8', label: '待機色' },
       { name: 'activeTextColor', type: 'color', default: '#FFFFFF', label: '発声中色' },
       { name: 'completedTextColor', type: 'color', default: '#A8FF60', label: '発声後色' },
@@ -255,20 +256,16 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         ? stringParam(params, 'activeTextColor', '#FFFFFF')
         : stringParam(params, 'completedTextColor', '#A8FF60');
     const textObject = this.ensureText(container, text, params, fontSize, color);
-    this.typographyEffects.update(
-      container,
-      textObject,
-      text,
-      this.resolveTypographyEffects(params),
-      {
-        nowMs,
-        startMs,
-        phraseStartMs: numberParam(params, 'phraseStartMs', startMs),
-        seed,
-        index,
-        intensity
-      }
-    );
+    const typographyParams = this.resolveTypographyEffects(params);
+    const typographyContext = {
+      nowMs,
+      startMs,
+      phraseStartMs: numberParam(params, 'phraseStartMs', startMs),
+      seed,
+      index,
+      intensity
+    };
+    this.typographyEffects.prepareSource(textObject, text, typographyParams, typographyContext);
     this.updateCharacterText(
       container,
       text,
@@ -278,6 +275,14 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       nowMs,
       startMs,
       endMs
+    );
+    const characterGroup = container.children.find(child => child.name === CHAR_GROUP_NAME) as PIXI.Container;
+    this.typographyEffects.update(
+      container,
+      textObject,
+      characterGroup,
+      typographyParams,
+      typographyContext
     );
     // 本文は文字単位のTextで描画する。単語Textは複製・破壊などの効果生成源としてのみ保持する。
     textObject.renderable = false;
@@ -294,10 +299,11 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   ): { x: number; y: number; rotation: number; scale: number } {
     const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
+    const fontWeight = stringParam(params, 'fontWeight', '700');
     const widths = words.map(word => Math.max(
       fontSize * 0.5,
       Array.from(word.word || ' ').reduce(
-        (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize),
+        (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize, fontWeight),
         0
       )
     ));
@@ -333,12 +339,13 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   ): { x: number; y: number; rotation: number; scale: number } {
     const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
+    const fontWeight = stringParam(params, 'fontWeight', '700');
     const wordWidths = Array.from({ length: total }, (_, wordIndex) => {
       const text = words[wordIndex]?.word || '　';
       return Math.max(
         fontSize * 0.5,
         Array.from(text).reduce(
-          (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize),
+          (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize, fontWeight),
           0
         )
       );
@@ -396,6 +403,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const displayCharacters = Array.from(displayText);
     const characterTimings = Array.isArray(params.chars) ? params.chars as CharUnit[] : [];
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
+    const fontWeight = stringParam(params, 'fontWeight', '700');
     const waitingColor = stringParam(params, 'textColor', '#F3F0E8');
     const activeColor = stringParam(params, 'activeTextColor', '#FFFFFF');
     const completedColor = stringParam(params, 'completedTextColor', '#A8FF60');
@@ -417,13 +425,13 @@ export class KineticSceneTemplate implements IAnimationTemplate {
           ? activeColor
           : completedColor;
       const visibleCharacter = displayCharacters[characterIndex] ?? character;
-      const signature = `${visibleCharacter}|${fontFamily}|${fontSize}|${color}`;
+      const signature = `${visibleCharacter}|${fontFamily}|${fontSize}|${fontWeight}|${color}`;
       let characterText = group!.children.find(
         child => child.name === `${CHAR_NAME_PREFIX}${characterIndex}`
       ) as PIXI.Text | undefined;
 
       if (!characterText) {
-        const style = this.createCharacterStyle(fontFamily, fontSize, color);
+        const style = this.createCharacterStyle(fontFamily, fontSize, fontWeight, color);
         characterText = new PIXI.Text(visibleCharacter, style);
         characterText.name = `${CHAR_NAME_PREFIX}${characterIndex}`;
         characterText.anchor.set(0.5);
@@ -431,11 +439,11 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         group!.addChild(characterText);
       } else if ((characterText as PIXI.Text & { __kineticSignature?: string }).__kineticSignature !== signature) {
         characterText.text = visibleCharacter;
-        characterText.style = this.createCharacterStyle(fontFamily, fontSize, color);
+        characterText.style = this.createCharacterStyle(fontFamily, fontSize, fontWeight, color);
         (characterText as PIXI.Text & { __kineticSignature?: string }).__kineticSignature = signature;
       }
 
-      widths.push(this.measureTextWidth(character, fontFamily, fontSize));
+      widths.push(this.measureTextWidth(character, fontFamily, fontSize, fontWeight));
     });
 
     group.children
@@ -457,27 +465,27 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     });
   }
 
-  private createCharacterStyle(fontFamily: string, fontSize: number, color: string): PIXI.TextStyle {
+  private createCharacterStyle(fontFamily: string, fontSize: number, fontWeight: string, color: string): PIXI.TextStyle {
     return TextStyleFactory.createTextStyle({
       fontFamily,
       fontSize,
       fill: color,
       align: 'center',
-      fontWeight: '700',
+      fontWeight,
       paddingMultiplier: 0.2,
       minPadding: 10
     });
   }
 
-  private measureTextWidth(text: string, fontFamily: string, fontSize: number): number {
-    const key = `${fontFamily}|${fontSize}|700|${text}`;
+  private measureTextWidth(text: string, fontFamily: string, fontSize: number, fontWeight: string): number {
+    const key = `${fontFamily}|${fontSize}|${fontWeight}|${text}`;
     const cached = this.textWidthCache.get(key);
     if (cached !== undefined) return cached;
     const style = TextStyleFactory.createTextStyle({
       fontFamily,
       fontSize,
       fill: '#FFFFFF',
-      fontWeight: '700',
+      fontWeight,
       paddingMultiplier: 0,
       minPadding: 0
     });
@@ -495,7 +503,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   ): PIXI.Text {
     let textObject = container.children.find(child => child.name === TEXT_NAME) as PIXI.Text | undefined;
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
-    const signature = `${text}|${fontFamily}|${fontSize}|${color}`;
+    const fontWeight = stringParam(params, 'fontWeight', '700');
+    const signature = `${text}|${fontFamily}|${fontSize}|${fontWeight}|${color}`;
 
     if (!textObject) {
       textObject = TextStyleFactory.createHighDPIText(text, {
@@ -503,7 +512,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         fontSize,
         fill: color,
         align: 'center',
-        fontWeight: '700'
+        fontWeight
       });
       textObject.name = TEXT_NAME;
       textObject.anchor.set(0.5);
@@ -517,7 +526,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         fontSize,
         fill: color,
         align: 'center',
-        fontWeight: '700'
+        fontWeight
       });
       (textObject as PIXI.Text & { __kineticSignature?: string }).__kineticSignature = signature;
     }

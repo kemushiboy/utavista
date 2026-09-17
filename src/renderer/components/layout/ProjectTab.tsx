@@ -53,6 +53,9 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   const [isExportingSrt, setIsExportingSrt] = useState(false);
   const [srtStatus, setSrtStatus] = useState('');
   const [srtStatusType, setSrtStatusType] = useState<'success' | 'error' | 'info'>('info');
+  const [isExportingPng, setIsExportingPng] = useState(false);
+  const [pngStatus, setPngStatus] = useState('');
+  const [pngStatusType, setPngStatusType] = useState<'success' | 'error' | 'info'>('info');
   // ロックステップエクスポーター参照（キャンセル対応）
   const exporterRef = useRef<WebCodecsLockstepExporter | null>(null);
   // WebCodecsサポート状況（現在の設定に対する）
@@ -459,6 +462,50 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
     }
   };
 
+  const handlePngExport = async () => {
+    if (typeof window.electronAPI?.exportPng !== 'function') {
+      setPngStatusType('error');
+      setPngStatus('PNG出力機能がアプリに反映されていません。Electronアプリを完全に終了して再起動してください。');
+      return;
+    }
+
+    setIsExportingPng(true);
+    setPngStatus('');
+    try {
+      // 現在時刻の全シーンと共通Post FXを最終キャンバスへ反映する。
+      const captureTime = engine.currentTime;
+      engine.setCurrentTime(captureTime);
+      engine.app.render();
+
+      const capturedCanvas = engine.app.renderer.extract.canvas() as HTMLCanvasElement;
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        capturedCanvas.toBlob(result => {
+          if (result) resolve(result);
+          else reject(new Error('PNG画像の生成に失敗しました'));
+        }, 'image/png');
+      });
+      const imageData = new Uint8Array(await blob.arrayBuffer());
+      const timeLabel = formatTime(captureTime).replace(/[:.]/g, '-');
+      const filePath = await window.electronAPI.exportPng(imageData, `utavista_${timeLabel}.png`);
+
+      if (!filePath) {
+        setPngStatusType('info');
+        setPngStatus('PNG出力をキャンセルしました');
+        return;
+      }
+
+      setPngStatusType('success');
+      setPngStatus(`PNGを書き出しました: ${filePath}`);
+    } catch (error) {
+      console.error('PNG export failed:', error);
+      setPngStatusType('error');
+      const message = error instanceof Error ? error.message : String(error);
+      setPngStatus(`PNGの書き出しに失敗しました: ${message}`);
+    } finally {
+      setIsExportingPng(false);
+    }
+  };
+
   // メモリリーク調査用の状態
   const [testLogs, setTestLogs] = useState<string[]>([]);
   const [isTesting, setIsTesting] = useState(false);
@@ -834,6 +881,30 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
               type="error" 
               message={exportError}
               onClose={() => setExportError(null)}
+            />
+          )}
+        </div>
+      </Section>
+
+      <hr className="u-divider" />
+
+      <Section title="静止画（PNG）出力">
+        <div className="image-export-settings">
+          <p>タイムラインの現在位置を、背景・文字・共通Post FXを合成した1枚のPNGとして書き出します。</p>
+          <Button
+            variant="secondary"
+            size="large"
+            fullWidth
+            onClick={handlePngExport}
+            disabled={isExportingPng || isExporting}
+          >
+            {isExportingPng ? 'PNGを書き出し中…' : '現在のフレームをPNGで書き出す'}
+          </Button>
+          {pngStatus && (
+            <StatusMessage
+              type={pngStatusType}
+              message={pngStatus}
+              onClose={() => setPngStatus('')}
             />
           )}
         </div>

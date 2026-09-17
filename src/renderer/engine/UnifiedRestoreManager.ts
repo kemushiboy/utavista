@@ -217,21 +217,24 @@ export class UnifiedRestoreManager {
       if (phrase?.parameterDiff) parameterSets.push(phrase.parameterDiff);
     });
 
-    const fontFamilies = new Set<string>();
+    const fontSelections = new Map<string, { family: string; weight?: string }>();
     parameterSets.forEach(params => {
       if (!params || typeof params.fontFamily !== 'string' || !params.fontFamily.trim()) return;
       const normalized = FontService.normalizeFontFamily(params.fontFamily);
       params.fontFamily = normalized;
-      fontFamilies.add(normalized);
+      const weight = typeof params.fontWeight === 'string' ? params.fontWeight : undefined;
+      fontSelections.set(`${normalized}|${weight || ''}`, { family: normalized, weight });
     });
 
     const results = await Promise.allSettled(
-      Array.from(fontFamilies, fontFamily => FontService.ensureFontLoaded(fontFamily))
+      Array.from(fontSelections.values(), selection =>
+        FontService.ensureFontLoaded(selection.family, selection.weight)
+      )
     );
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
         console.warn(
-          `[UnifiedRestoreManager] フォント ${Array.from(fontFamilies)[index]} の復元に失敗しました:`,
+          `[UnifiedRestoreManager] フォント ${Array.from(fontSelections.values())[index].family} の復元に失敗しました:`,
           result.reason
         );
       }

@@ -6,6 +6,7 @@ export interface StandardParameters {
   // === 基本テキストパラメータ ===
   fontSize: number;
   fontFamily: string;
+  fontWeight: string;
   textColor: string;           // 統一色パラメータ（fill, defaultTextColor廃止）
   
   // === テンプレート固有色パラメータ ===
@@ -174,6 +175,7 @@ export const DEFAULT_PARAMETERS: StandardParameters = {
   // 基本パラメータ
   fontSize: 120,
   fontFamily: 'Arial',
+  fontWeight: '700',
   textColor: '#FFA500',
   activeTextColor: '#FFFF80',
   completedTextColor: '#FFF7EB',

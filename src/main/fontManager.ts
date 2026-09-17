@@ -151,7 +151,7 @@ class FontManager {
       const nameWithoutVariableSuffix = baseName.replace(
         /[-_\s]*VariableFont[-_\s]*(?:[A-Za-z]+(?:[,\s_-]+[A-Za-z]+)*)?$/i,
         ''
-      );
+      ).replace(/[-_\s]*\[[^\]]*wght[^\]]*\]$/i, '');
       
       // Extract font family from filename
       let family = nameWithoutVariableSuffix || baseName;
@@ -195,7 +195,8 @@ class FontManager {
         fullName: baseName,
         style,
         weight,
-        path: fullPath
+        path: fullPath,
+        variable: /variablefont|(?:^|[_-])wght(?:[_,-]|$)|\[.*wght.*\]/i.test(baseName)
       };
     } catch (error) {
       console.debug(`Error parsing font file ${fileName}:`, error);

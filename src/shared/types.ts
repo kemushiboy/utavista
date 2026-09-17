@@ -87,6 +87,7 @@ export interface FontInfo {
   style: string;
   weight: string;
   path?: string;
+  variable?: boolean;
 }
 
 export interface TemplateInfo {
@@ -114,6 +115,7 @@ export interface RendererToMainChannels {
   'file:consume-pending-project': () => Promise<ProjectData | null>;
   'file:select-media': (type: 'video' | 'audio' | 'image') => Promise<MediaFileInfo>;
   'file:export-srt': (content: string, defaultFileName?: string) => Promise<string | null>;
+  'file:export-png': (imageData: Uint8Array, defaultFileName?: string) => Promise<string | null>;
   'export:start': (options: ExportOptions) => Promise<void>;
   'export:cancel': () => Promise<void>;
   'export:frame-ready': (frameData: string) => void;

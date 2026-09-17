@@ -16,6 +16,7 @@ export interface ElectronAPI {
   onProjectOpenRequested(callback: () => void): () => void;
   selectMedia(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo>;
   exportSrt(content: string, defaultFileName?: string): Promise<string | null>;
+  exportPng(imageData: Uint8Array, defaultFileName?: string): Promise<string | null>;
   
   // Video export (legacy)
   startExport(options: ExportOptions): Promise<void>;

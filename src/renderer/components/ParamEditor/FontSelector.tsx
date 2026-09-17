@@ -4,11 +4,12 @@ import './FontSelector.css';
 
 interface FontSelectorProps {
   value: string;
-  onChange: (fontFamily: string) => void;
+  weightValue: string;
+  onChange: (fontFamily: string, fontWeight: string) => void;
   disabled?: boolean;
 }
 
-const FontSelector: React.FC<FontSelectorProps> = ({ value, onChange, disabled = false }) => {
+const FontSelector: React.FC<FontSelectorProps> = ({ value, weightValue, onChange, disabled = false }) => {
   const [fontFamilies, setFontFamilies] = useState<FontFamily[]>([]);
 
   useEffect(() => {
@@ -26,10 +27,28 @@ const FontSelector: React.FC<FontSelectorProps> = ({ value, onChange, disabled =
     return legacyMatch?.family || '';
   }, [fontFamilies, value]);
 
+  const weightOptions = useMemo(
+    () => selectedFamily ? FontService.getFontWeightOptions(selectedFamily) : [],
+    [selectedFamily, fontFamilies]
+  );
+  const selectedWeight = weightOptions.some(option => option.value === weightValue)
+    ? weightValue
+    : weightOptions.find(option => option.value === '400')?.value || weightOptions[0]?.value || '400';
+
   const handleFamilyChange = async (familyName: string) => {
     if (!familyName) return;
-    await FontService.ensureFontLoaded(familyName);
-    onChange(familyName);
+    const options = FontService.getFontWeightOptions(familyName);
+    const nextWeight = options.some(option => option.value === weightValue)
+      ? weightValue
+      : options.find(option => option.value === '400')?.value || options[0]?.value || '400';
+    await FontService.ensureFontLoaded(familyName, nextWeight);
+    onChange(familyName, nextWeight);
+  };
+
+  const handleWeightChange = async (fontWeight: string) => {
+    if (!selectedFamily) return;
+    await FontService.ensureFontLoaded(selectedFamily, fontWeight);
+    onChange(selectedFamily, fontWeight);
   };
 
   return (
@@ -49,9 +68,25 @@ const FontSelector: React.FC<FontSelectorProps> = ({ value, onChange, disabled =
         </select>
       </div>
 
+      {selectedFamily && weightOptions.length > 0 && (
+        <div className="font-style-selector">
+          <label className="font-selector-label">書体:</label>
+          <select
+            value={selectedWeight}
+            onChange={event => void handleWeightChange(event.target.value)}
+            disabled={disabled}
+            className="font-style-select"
+          >
+            {weightOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {selectedFamily && (
         <div className="font-preview">
-          <div className="font-preview-text" style={{ fontFamily: selectedFamily }}>
+          <div className="font-preview-text" style={{ fontFamily: selectedFamily, fontWeight: selectedWeight }}>
             {selectedFamily} — あいうえお ABC 123
           </div>
         </div>

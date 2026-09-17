@@ -207,7 +207,7 @@ export class FontLoader {
   }
 
   private static getFontWeightDescriptor(fontInfo: FontInfo): string {
-    if (/variablefont|(?:^|[_-])wght(?:[_,-]|$)/i.test(fontInfo.path || '')) {
+    if (fontInfo.variable || /variablefont|(?:^|[_-])wght(?:[_,-]|$)|\[.*wght.*\]/i.test(fontInfo.path || '')) {
       return '100 900';
     }
     return fontInfo.weight || 'normal';

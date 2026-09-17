@@ -32,6 +32,9 @@ const electronAPI = {
 
   exportSrt: (content: string, defaultFileName?: string): Promise<string | null> =>
     ipcRenderer.invoke('file:export-srt', content, defaultFileName),
+
+  exportPng: (imageData: Uint8Array, defaultFileName?: string): Promise<string | null> =>
+    ipcRenderer.invoke('file:export-png', imageData, defaultFileName),
   
   // Video export (legacy)
   startExport: (options: ExportOptions): Promise<void> => 

@@ -118,6 +118,45 @@ function ensureClone(container: PIXI.Container, source: PIXI.Text, name: string)
   return clone;
 }
 
+function syncTextGroup(target: PIXI.Container, source: PIXI.Container): void {
+  const sourceTexts = source.children.filter((child): child is PIXI.Text => child instanceof PIXI.Text);
+
+  sourceTexts.forEach((sourceText, index) => {
+    let clone = target.children[index] as PIXI.Text | undefined;
+    if (!(clone instanceof PIXI.Text)) {
+      if (clone) destroyDisplayObject(clone);
+      clone = new PIXI.Text(sourceText.text, sourceText.style);
+      clone.anchor.set(sourceText.anchor.x, sourceText.anchor.y);
+      target.addChildAt(clone, Math.min(index, target.children.length));
+    }
+
+    clone.text = sourceText.text;
+    clone.style = sourceText.style;
+    clone.tint = sourceText.tint;
+    clone.position.set(sourceText.x, sourceText.y);
+    clone.scale.set(sourceText.scale.x, sourceText.scale.y);
+    clone.skew.set(sourceText.skew.x, sourceText.skew.y);
+    clone.rotation = sourceText.rotation;
+    clone.alpha = sourceText.alpha;
+    clone.visible = sourceText.visible;
+    clone.renderable = sourceText.renderable;
+  });
+
+  target.children.slice(sourceTexts.length).forEach(destroyDisplayObject);
+}
+
+function ensureGroupClone(container: PIXI.Container, source: PIXI.Container, name: string): PIXI.Container {
+  let clone = container.children.find(child => child.name === name) as PIXI.Container | undefined;
+  if (!clone || clone instanceof PIXI.Text) {
+    if (clone) destroyDisplayObject(clone);
+    clone = new PIXI.Container();
+    clone.name = name;
+    container.addChildAt(clone, Math.max(0, container.getChildIndex(source)));
+  }
+  syncTextGroup(clone, source);
+  return clone;
+}
+
 /** 指定時刻・seed・文字位置だけで置換結果を決める。 */
 export function createShuffledText(
   text: string,
@@ -146,8 +185,7 @@ export function destructionEnvelope(timeMs: number, duration: number): number {
 }
 
 export class TypographyEffects {
-  update(
-    container: PIXI.Container,
+  prepareSource(
     source: PIXI.Text,
     originalText: string,
     params: TypographyEffectParams,
@@ -155,8 +193,17 @@ export class TypographyEffects {
   ): void {
     this.updateShuffle(source, originalText, params, context);
     this.updateWarpFilter(source, params, context);
-    this.updateRepetition(container, source, params, context);
-    this.updateDestruction(container, source, params, context);
+  }
+
+  update(
+    container: PIXI.Container,
+    source: PIXI.Text,
+    visualSource: PIXI.Container,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext
+  ): void {
+    this.updateRepetition(container, visualSource, params, context);
+    this.updateDestruction(container, source, visualSource, params, context);
     this.updateEmitters(container, source, params, context);
     this.updateSurfaceCopies(container, source, params, context);
   }
@@ -170,6 +217,8 @@ export class TypographyEffects {
       delete source.__kineticEffectFilter;
     }
     if (source) source.alpha = 1;
+    const characterGroup = container.children.find(child => child.name === 'kinetic-scene-char-group');
+    if (characterGroup) characterGroup.alpha = 1;
   }
 
   private updateShuffle(
@@ -249,7 +298,7 @@ export class TypographyEffects {
 
   private updateRepetition(
     container: PIXI.Container,
-    source: PIXI.Text,
+    visualSource: PIXI.Container,
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
@@ -259,7 +308,7 @@ export class TypographyEffects {
     }
     const count = Math.max(1, Math.round(params.repetitionCount));
     for (let copyIndex = 0; copyIndex < count; copyIndex += 1) {
-      const clone = ensureClone(container, source, `${EFFECT_PREFIX}repeat-${copyIndex}`);
+      const clone = ensureGroupClone(container, visualSource, `${EFFECT_PREFIX}repeat-${copyIndex}`);
       const depth = (copyIndex + 1) / count;
       const phase = context.nowMs * 0.0018 + copyIndex * 0.38 + context.index;
       const direction = copyIndex % 2 === 0 ? 1 : -1;
@@ -281,6 +330,7 @@ export class TypographyEffects {
   private updateDestruction(
     container: PIXI.Container,
     source: PIXI.Text,
+    visualSource: PIXI.Container,
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
@@ -290,36 +340,41 @@ export class TypographyEffects {
     if (amount <= 0.001) {
       clearByPrefix(container, 'destroy-');
       source.alpha = 1;
+      visualSource.alpha = 1;
       return;
     }
 
     const count = Math.max(2, Math.round(params.destructionSlices));
     source.alpha = Math.max(0.05, 1 - amount * 0.92);
+    visualSource.alpha = source.alpha;
     for (let sliceIndex = 0; sliceIndex < count; sliceIndex += 1) {
       const name = `${EFFECT_PREFIX}destroy-${sliceIndex}`;
       let fragment = container.children.find(child => child.name === name) as PIXI.Container | undefined;
-      let fragmentText: PIXI.Text;
+      let fragmentText: PIXI.Container;
       let mask: PIXI.Graphics;
       if (!fragment) {
         fragment = new PIXI.Container();
         fragment.name = name;
-        fragmentText = new PIXI.Text(source.text, source.style);
-        fragmentText.anchor.set(0.5);
+        fragmentText = new PIXI.Container();
+        syncTextGroup(fragmentText, visualSource);
         mask = new PIXI.Graphics();
         fragment.addChild(fragmentText, mask);
         fragmentText.mask = mask;
         container.addChild(fragment);
       } else {
-        fragmentText = fragment.children[0] as PIXI.Text;
+        fragmentText = fragment.children[0] as PIXI.Container;
         mask = fragment.children[1] as PIXI.Graphics;
       }
-      fragmentText.text = source.text;
-      fragmentText.style = source.style;
-      fragmentText.tint = source.tint;
-      const sliceHeight = Math.max(1, source.height / count);
+      syncTextGroup(fragmentText, visualSource);
+      const sliceHeight = Math.max(1, visualSource.height / count);
       mask.clear();
       mask.beginFill(0xffffff);
-      mask.drawRect(-source.width / 2 - 4, -source.height / 2 + sliceHeight * sliceIndex, source.width + 8, sliceHeight + 1);
+      mask.drawRect(
+        -visualSource.width / 2 - 4,
+        -visualSource.height / 2 + sliceHeight * sliceIndex,
+        visualSource.width + 8,
+        sliceHeight + 1
+      );
       mask.endFill();
       const noiseX = deterministicNoise(context.seed + context.index * 211 + sliceIndex * 43);
       const noiseY = deterministicNoise(context.seed + context.index * 223 + sliceIndex * 59);

@@ -502,7 +502,7 @@ export class ParameterManagerV2 {
     
     // 重要なレイアウトパラメータは常に保持
     const criticalParams: (keyof StandardParameters)[] = [
-      'letterSpacing', 'fontSize', 'fontFamily', 'lineHeight', 
+      'letterSpacing', 'fontSize', 'fontFamily', 'fontWeight', 'lineHeight',
       'offsetX', 'offsetY', 'textColor'
     ];
     

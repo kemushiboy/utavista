@@ -121,6 +121,23 @@ export class FileManager {
     await fs.writeFile(result.filePath, utf8Content, 'utf-8');
     return result.filePath;
   }
+
+  async exportPng(imageData: Uint8Array, defaultFileName: string = 'screenshot.png'): Promise<string | null> {
+    const safeBaseName = path.basename(defaultFileName, path.extname(defaultFileName)) || 'screenshot';
+    const result = await dialog.showSaveDialog({
+      title: 'Export Current Frame as PNG',
+      defaultPath: `${safeBaseName}.png`,
+      filters: [
+        { name: 'PNG Image', extensions: ['png'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (result.canceled || !result.filePath) return null;
+
+    await fs.writeFile(result.filePath, imageData);
+    return result.filePath;
+  }
   
   async selectMediaFile(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo> {
     const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv', '3gp'];
@@ -286,6 +303,15 @@ export function setupFileHandlers() {
       return await fileManager.exportSrt(content, defaultFileName);
     } catch (error) {
       console.error('Failed to export SRT:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('file:export-png', async (_event, imageData: Uint8Array, defaultFileName?: string) => {
+    try {
+      return await fileManager.exportPng(imageData, defaultFileName);
+    } catch (error) {
+      console.error('Failed to export PNG:', error);
       throw error;
     }
   });
