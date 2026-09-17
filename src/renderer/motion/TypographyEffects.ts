@@ -80,7 +80,7 @@ void main(void) {
 }
 `;
 
-interface EffectText extends PIXI.Text {
+interface EffectContainer extends PIXI.Container {
   __kineticEffectFilter?: PIXI.Filter;
 }
 
@@ -192,7 +192,6 @@ export class TypographyEffects {
     context: TypographyEffectContext
   ): void {
     this.updateShuffle(source, originalText, params, context);
-    this.updateWarpFilter(source, params, context);
   }
 
   update(
@@ -202,6 +201,7 @@ export class TypographyEffects {
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
+    this.updateWarpFilter(visualSource, params, context);
     this.updateRepetition(container, visualSource, params, context);
     this.updateDestruction(container, source, visualSource, params, context);
     this.updateEmitters(container, source, params, context);
@@ -210,14 +210,13 @@ export class TypographyEffects {
 
   cleanup(container: PIXI.Container): void {
     clearByPrefix(container, '');
-    const source = container.children.find(child => child.name === 'kinetic-scene-text') as EffectText | undefined;
-    if (source?.__kineticEffectFilter) {
-      source.filters = (source.filters || []).filter(filter => filter !== source.__kineticEffectFilter);
-      source.__kineticEffectFilter.destroy();
-      delete source.__kineticEffectFilter;
-    }
+    const source = container.children.find(child => child.name === 'kinetic-scene-text') as EffectContainer | undefined;
+    this.removeWarpFilter(source);
     if (source) source.alpha = 1;
-    const characterGroup = container.children.find(child => child.name === 'kinetic-scene-char-group');
+    const characterGroup = container.children.find(
+      child => child.name === 'kinetic-scene-char-group'
+    ) as EffectContainer | undefined;
+    this.removeWarpFilter(characterGroup);
     if (characterGroup) characterGroup.alpha = 1;
   }
 
@@ -252,17 +251,13 @@ export class TypographyEffects {
   }
 
   private updateWarpFilter(
-    source: EffectText,
+    source: EffectContainer,
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
     const enabled = params.organicEnabled || params.surfaceEnabled;
     if (!enabled) {
-      if (source.__kineticEffectFilter) {
-        source.filters = (source.filters || []).filter(filter => filter !== source.__kineticEffectFilter);
-        source.__kineticEffectFilter.destroy();
-        delete source.__kineticEffectFilter;
-      }
+      this.removeWarpFilter(source);
       return;
     }
 
@@ -281,6 +276,7 @@ export class TypographyEffects {
     }
 
     const filter = source.__kineticEffectFilter;
+    filter.padding = Math.max(40, source.height * 0.4);
     filter.uniforms.uTime = context.nowMs / 1000;
     filter.uniforms.uOrganicAmplitude = params.organicEnabled
       ? params.organicAmplitude * context.intensity
@@ -294,6 +290,13 @@ export class TypographyEffects {
       ? ({ ribbon: 1, cylinder: 2, torus: 3 } as const)[params.surfaceShape]
       : 0;
     filter.uniforms.uSurfaceRepeat = params.surfaceEnabled ? params.surfaceRepeat : 1;
+  }
+
+  private removeWarpFilter(source?: EffectContainer): void {
+    if (!source?.__kineticEffectFilter) return;
+    source.filters = (source.filters || []).filter(filter => filter !== source.__kineticEffectFilter);
+    source.__kineticEffectFilter.destroy();
+    delete source.__kineticEffectFilter;
   }
 
   private updateRepetition(
