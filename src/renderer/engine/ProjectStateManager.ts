@@ -1,4 +1,5 @@
 import { PhraseUnit, StageConfig, BackgroundConfig } from '../types/types';
+import type { GlobalPostEffectConfig } from '../effects/GlobalPostEffectManager';
 
 // プロジェクト状態の型定義
 export interface ProjectState {
@@ -13,6 +14,7 @@ export interface ProjectState {
   currentTime?: number; // 現在の再生時間も保存
   backgroundConfig?: BackgroundConfig; // 背景設定
   stageConfig?: StageConfig; // ステージ設定
+  postEffectConfig?: GlobalPostEffectConfig; // 全シーン共通Post FX
   // 音楽ファイル情報
   audioFileName?: string;
   audioFileDuration?: number;

@@ -32,8 +32,6 @@ export const DEFAULT_POST_EFFECT_CONFIG: GlobalPostEffectConfig = {
   contrast: 1
 };
 
-const STORAGE_KEY = 'utavista.global-post-effects.v1';
-
 const fragmentShader = `
 varying vec2 vTextureCoord;
 uniform sampler2D uSampler;
@@ -149,7 +147,7 @@ export class GlobalPostEffectManager {
 
   constructor(target: PIXI.Container) {
     this.target = target;
-    this.config = this.load();
+    this.config = { ...DEFAULT_POST_EFFECT_CONFIG };
     this.filter = new PIXI.Filter(undefined, fragmentShader, {
       uTime: 0,
       uMaster: 1,
@@ -175,7 +173,6 @@ export class GlobalPostEffectManager {
 
   setConfig(updates: Partial<GlobalPostEffectConfig>): void {
     this.config = normalizeConfig({ ...this.config, ...updates });
-    this.save();
     this.syncFilterAttachment();
     this.update(Number(this.filter.uniforms.uTime || 0) * 1000);
   }
@@ -213,21 +210,4 @@ export class GlobalPostEffectManager {
     if (!this.config.enabled && containsFilter) this.target.filters = filters.filter(filter => filter !== this.filter);
   }
 
-  private load(): GlobalPostEffectConfig {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return { ...DEFAULT_POST_EFFECT_CONFIG };
-      return normalizeConfig(JSON.parse(raw) as Partial<GlobalPostEffectConfig>);
-    } catch {
-      return { ...DEFAULT_POST_EFFECT_CONFIG };
-    }
-  }
-
-  private save(): void {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
-    } catch (error) {
-      console.warn('ポストエフェクト設定を保存できませんでした:', error);
-    }
-  }
 }

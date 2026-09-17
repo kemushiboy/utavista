@@ -6,6 +6,7 @@ import { InstanceManager } from './InstanceManager';
 import { ParameterProcessor } from '../utils/ParameterProcessor';
 import { IAnimationTemplate } from '../types/types';
 import { FontService } from '../services/FontService';
+import { DEFAULT_POST_EFFECT_CONFIG } from '../effects/GlobalPostEffectManager';
 import { 
   NormalizedProjectData, 
   ProjectFileData, 
@@ -73,6 +74,12 @@ export class UnifiedRestoreManager {
 
       // 3. 背景設定の復元
       await this.restoreBackgroundConfig(normalizedData.backgroundConfig);
+
+      // 全シーン共通Post FXはプロジェクト単位で復元する。
+      this.engine.updatePostEffectConfig(
+        normalizedData.postEffectConfig || DEFAULT_POST_EFFECT_CONFIG,
+        false
+      );
 
       // 4. 音声情報の復元
       await this.restoreAudioInfo(normalizedData.audioInfo);

@@ -9,6 +9,10 @@ import { ParameterValidator } from '../../utils/ParameterValidator';
 import { ParameterProcessor } from '../utils/ParameterProcessor';
 import { setProjectSaveSnapshot } from './ProjectSaveStatus';
 import { FontService } from './FontService';
+import {
+  DEFAULT_POST_EFFECT_CONFIG,
+  type GlobalPostEffectConfig
+} from '../effects/GlobalPostEffectManager';
 
 // プロジェクトファイルのメタデータ
 export interface ProjectMetadata {
@@ -36,6 +40,7 @@ export interface ProjectFileData {
   backgroundColor?: string;
   backgroundConfig?: BackgroundConfig;
   stageConfig?: StageConfig;
+  postEffectConfig?: GlobalPostEffectConfig;
   // 個別設定情報
   individualSettingsEnabled?: string[];
   // 後方互換性のため（読み込み時のみ使用）
@@ -191,6 +196,10 @@ export class ProjectFileManager {
     if (projectData.stageConfig) {
       this.engine.resizeStage(projectData.stageConfig.aspectRatio, projectData.stageConfig.orientation);
     }
+    this.engine.updatePostEffectConfig(
+      projectData.postEffectConfig || DEFAULT_POST_EFFECT_CONFIG,
+      false
+    );
     await this.restoreProjectMedia(projectData);
     
     // 音楽ファイル要求イベントを発行
@@ -341,6 +350,10 @@ export class ProjectFileManager {
       if (projectData.stageConfig) {
         this.engine.resizeStage(projectData.stageConfig.aspectRatio, projectData.stageConfig.orientation);
       }
+      this.engine.updatePostEffectConfig(
+        projectData.postEffectConfig || DEFAULT_POST_EFFECT_CONFIG,
+        false
+      );
       await this.restoreProjectMedia(projectData);
       
       // 音楽ファイルの再読み込みを促す
@@ -557,6 +570,7 @@ export class ProjectFileManager {
       backgroundColor: state.backgroundColor,
       backgroundConfig: this.engine.getBackgroundConfig(),
       stageConfig: this.engine.getStageConfig(),
+      postEffectConfig: this.engine.getPostEffectConfig(),
       individualSettingsEnabled: this.engine.getParameterManager().getIndividualSettingsEnabled() // V2統一管理で個別設定リストを取得
     };
     

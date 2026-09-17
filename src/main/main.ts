@@ -13,27 +13,16 @@ import { persistenceManager } from './persistenceManager';
 // under heavy surface churn (Invalid mailbox / overlay spam). Disable overlays
 // and hardware video decode to keep composition stable during export.
 try {
-  app.commandLine.appendSwitch('disable-mac-overlays');
-  app.commandLine.appendSwitch('disable-accelerated-video-decode');
-  // Reduce IOSurface/zero-copy pressure on macOS (stabilize WindowServer)
-  app.commandLine.appendSwitch('disable-gpu-memory-buffer-compositor-resources');
-  app.commandLine.appendSwitch('disable-zero-copy');
-  // Prefer Metal path for ANGLE to avoid EGL warnings on macOS
-  app.commandLine.appendSwitch('use-angle', 'metal');
-  // Keep GPU enabled for general rendering; avoid full software fallback by default.
-  // If issues persist, consider enabling one of the following as a last resort:
-  // app.disableHardwareAcceleration();
-  // app.commandLine.appendSwitch('use-gl', 'swiftshader');
-  // app.commandLine.appendSwitch('disable-gpu');
-  // Log applied switches for diagnostics
-  // Note: process.argv doesn't include appendSwitch entries, so log explicitly
-  console.log('[Startup] Applied Chromium switches:', {
-    disableMacOverlays: true,
-    disableAcceleratedVideoDecode: true,
-    disableGpuMemoryBufferCompositorResources: true,
-    disableZeroCopy: true,
-    useAngle: 'metal'
-  });
+  if (process.platform === 'darwin') {
+    app.commandLine.appendSwitch('disable-mac-overlays');
+    app.commandLine.appendSwitch('disable-accelerated-video-decode');
+    // Reduce IOSurface/zero-copy pressure on macOS (stabilize WindowServer)
+    app.commandLine.appendSwitch('disable-gpu-memory-buffer-compositor-resources');
+    app.commandLine.appendSwitch('disable-zero-copy');
+    // MetalはmacOS専用。Windowsへ渡すとANGLE初期化失敗の原因になる。
+    app.commandLine.appendSwitch('use-angle', 'metal');
+    console.log('[Startup] Applied macOS Chromium safety switches');
+  }
 } catch (e) {
   console.warn('Failed to apply Chromium switches:', e);
 }
@@ -95,10 +84,27 @@ class ElectronApp {
       });
     } else {
       // プロダクションビルド時のHTMLファイルパス
-      const rendererPath = path.join(__dirname, '../renderer/index.html');
+      const rendererPath = path.join(app.getAppPath(), 'dist', 'renderer', 'index.html');
       console.log('Loading renderer from:', rendererPath);
-      this.mainWindow.loadFile(rendererPath);
+      void this.mainWindow.loadFile(rendererPath).catch((error) => {
+        console.error('Failed to load packaged renderer:', {
+          rendererPath,
+          error
+        });
+      });
     }
+
+    this.mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+      console.error('Renderer failed to load:', {
+        errorCode,
+        errorDescription,
+        validatedURL
+      });
+    });
+
+    this.mainWindow.webContents.on('render-process-gone', (_event, details) => {
+      console.error('Renderer process exited:', details);
+    });
     
     // Window event handlers
     this.mainWindow.on('closed', () => {

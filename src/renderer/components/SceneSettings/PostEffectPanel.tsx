@@ -27,7 +27,22 @@ const PostEffectPanel: React.FC<PostEffectPanelProps> = ({ engine }) => {
   const [config, setConfig] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
-    if (engine) setConfig(engine.getPostEffectConfig());
+    if (!engine) return;
+
+    const syncConfig = (event?: Event) => {
+      const eventConfig = (event as CustomEvent<{ config?: GlobalPostEffectConfig }> | undefined)
+        ?.detail?.config;
+      setConfig(eventConfig || engine.getPostEffectConfig());
+    };
+
+    syncConfig();
+    window.addEventListener('post-effect-config-changed', syncConfig);
+    window.addEventListener('project-loaded', syncConfig);
+
+    return () => {
+      window.removeEventListener('post-effect-config-changed', syncConfig);
+      window.removeEventListener('project-loaded', syncConfig);
+    };
   }, [engine]);
 
   const handleChange = (next: Record<string, unknown>) => {

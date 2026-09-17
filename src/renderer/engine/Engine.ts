@@ -23,7 +23,11 @@ import { ProjectFileData, AutoSaveData } from '../../types/UnifiedProjectData';
 import { OptimizedParameterUpdater } from './OptimizedParameterUpdater';
 import { BeatManager, BeatEventDetail } from '../services/BeatManager';
 import type { BeatMarker } from '../services/AudioAnalyzer';
-import { GlobalPostEffectConfig, GlobalPostEffectManager } from '../effects/GlobalPostEffectManager';
+import {
+  DEFAULT_POST_EFFECT_CONFIG,
+  GlobalPostEffectConfig,
+  GlobalPostEffectManager
+} from '../effects/GlobalPostEffectManager';
 
 export class Engine {
   // パラメータカテゴリ分類
@@ -181,7 +185,8 @@ export class Engine {
       templateAssignments: {},
       globalParams: { ...defaultParams },
       objectParams: {},
-      defaultTemplateId: templateId
+      defaultTemplateId: templateId,
+      postEffectConfig: { ...DEFAULT_POST_EFFECT_CONFIG }
     });
     
     // 個別設定変更リスナーの登録
@@ -443,7 +448,8 @@ export class Engine {
         objectParams: parameterData.phrases as Record<string, Record<string, any>>,
         individualSettingsEnabled: this.parameterManager.getIndividualSettingsEnabled(),
         parameterData,
-        defaultTemplateId: this.templateManager.getDefaultTemplateId()
+        defaultTemplateId: this.templateManager.getDefaultTemplateId(),
+        postEffectConfig: this.getPostEffectConfig()
       });
       this.projectStateManager.resetHistoryToCurrent('歌詞読み込み完了');
       this.dispatchUndoRedoStateChanged();
@@ -2214,6 +2220,7 @@ export class Engine {
       templateAssignments: this.templateManager.exportAssignments(),
       // V2パラメータデータ
       parameterData: v2Export,
+      postEffectConfig: this.getPostEffectConfig(),
       lyrics: this.phrases
     };
   }
@@ -2234,10 +2241,21 @@ export class Engine {
     return this.postEffectManager.getConfig();
   }
 
-  updatePostEffectConfig(config: Partial<GlobalPostEffectConfig>): void {
+  updatePostEffectConfig(
+    config: Partial<GlobalPostEffectConfig>,
+    saveHistory = true
+  ): void {
     this.postEffectManager.setConfig(config);
     this.postEffectManager.update(this.currentTime);
     this.app.render();
+
+    window.dispatchEvent(new CustomEvent('post-effect-config-changed', {
+      detail: { config: this.getPostEffectConfig() }
+    }));
+
+    if (saveHistory) {
+      this.saveUndoState('共通Post FX変更');
+    }
   }
 
   // ProjectStateManagerへのアクセサ
@@ -2491,6 +2509,7 @@ export class Engine {
       defaultTemplateId: this.templateManager.getDefaultTemplateId(),
       backgroundConfig: this.backgroundConfig,
       stageConfig: this.stageConfig,
+      postEffectConfig: this.getPostEffectConfig(),
       audioFileName: this.audioFileName,
       audioFileDuration: this.audioDuration
     });
@@ -2534,6 +2553,10 @@ export class Engine {
           this.parameterManager.updateGlobalDefaults(state.globalParams);
         }
         
+      }
+
+      if (state.postEffectConfig) {
+        this.updatePostEffectConfig(state.postEffectConfig, false);
       }
 
       // 復元したパラメータを使って文字配置を再計算する。
@@ -2612,7 +2635,8 @@ export class Engine {
           globalParams: this.parameterManager.getGlobalDefaults(),
           objectParams: paramExport.objects || {},
           individualSettingsEnabled: paramExport.individualSettingsEnabled || [],
-          defaultTemplateId: this.templateManager.getDefaultTemplateId()
+          defaultTemplateId: this.templateManager.getDefaultTemplateId(),
+          postEffectConfig: this.getPostEffectConfig()
         });
         this.projectStateManager.saveCurrentState('プロジェクト読み込み完了');
         
@@ -3818,7 +3842,8 @@ export class Engine {
           stageConfig: this.stageConfig,
           selectedTemplate: this.templateManager.getDefaultTemplateId(),
           templateParams: this.parameterManager.exportCompressed(),
-          backgroundConfig: this.backgroundConfig
+          backgroundConfig: this.backgroundConfig,
+          postEffectConfig: this.getPostEffectConfig()
         },
         // 既存のrecentFilesデータを保持
         recentFiles: existingData?.recentFiles || { audioFiles: [], backgroundVideoFiles: [] }
