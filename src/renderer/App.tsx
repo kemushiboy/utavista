@@ -213,6 +213,37 @@ function App() {
           }
         }
       }
+      // Space: 入力操作中でなければタイムラインの再生・一時停止を切り替える。
+      else if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'Space') {
+        const target = event.target as HTMLElement | null;
+        const isInteractiveTarget = Boolean(target?.closest(
+          'input, textarea, select, button, a, [contenteditable="true"], [role="textbox"]'
+        ));
+        if (isInteractiveTarget) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+
+        const engine = engineRef.current;
+        if (!engine) return;
+
+        if (engine.isRunning) {
+          engine.pause();
+          setIsPlaying(false);
+          if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+          }
+        } else {
+          engine.play();
+          setIsPlaying(true);
+          if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+          }
+          animationFrameRef.current = requestAnimationFrame(updateFrame);
+        }
+      }
       // 開発用ショートカット (Ctrl+Shift+T でパラメータテスト実行)
       else if (process.env.NODE_ENV === 'development' && event.ctrlKey && event.shiftKey && event.key === 'T') {
         event.preventDefault();
