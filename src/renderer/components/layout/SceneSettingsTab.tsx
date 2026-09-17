@@ -4,6 +4,10 @@ import { KineticSceneTemplate } from '../../templates/KineticSceneTemplate';
 import ParamEditor from '../ParamEditor/ParamEditor';
 import TemplatePresetPanel from '../TemplatePanel/TemplatePresetPanel';
 import PostEffectPanel from '../SceneSettings/PostEffectPanel';
+import {
+  getObjectSelectionSnapshot,
+  subscribeObjectSelection
+} from '../../services/ObjectSelectionState';
 import '../../styles/SceneSettingsTab.css';
 
 type EditorMode = 'global' | 'selection';
@@ -21,12 +25,13 @@ function normalizeTargetId(objectId: string, objectType: string): string {
 }
 
 const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
+  const initialSelection = useMemo(() => getObjectSelectionSnapshot(), []);
   const paramConfig = useMemo(() => fixedTemplate.getParameterConfig(), []);
   const defaults = useMemo(() => Object.fromEntries(paramConfig.map(param => [param.name, param.default])), [paramConfig]);
   const [mode, setMode] = useState<EditorMode>('global');
   const [globalParams, setGlobalParams] = useState<Record<string, unknown>>(defaults);
-  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
-  const [selectedObjectType, setSelectedObjectType] = useState('');
+  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>(initialSelection.objectIds);
+  const [selectedObjectType, setSelectedObjectType] = useState(initialSelection.objectType);
   const [objectParams, setObjectParams] = useState<Record<string, unknown>>(defaults);
 
   const resolveTargetId = useCallback((objectId: string, objectType: string): string => {
@@ -58,36 +63,32 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
     syncGlobalParams();
   }, [syncGlobalParams]);
 
+  useEffect(() => subscribeObjectSelection(snapshot => {
+    setSelectedObjectIds(snapshot.objectIds);
+    setSelectedObjectType(snapshot.objectType);
+    const normalized = Array.from(new Set(
+      snapshot.objectIds.map(id => resolveTargetId(id, snapshot.objectType))
+    ));
+    syncObjectParams(normalized);
+    if (snapshot.objectIds.length > 0) setMode('selection');
+  }), [resolveTargetId, syncObjectParams]);
+
   useEffect(() => {
-    const handleSingleSelection = (event: Event) => {
-      const detail = (event as CustomEvent).detail || {};
-      const ids = detail.objectId ? [detail.objectId] : [];
-      const type = detail.objectType || '';
-      const normalized = ids.map(id => resolveTargetId(id, type));
-      setSelectedObjectIds(ids);
-      setSelectedObjectType(type);
+    const handleProjectLoaded = () => {
+      syncGlobalParams();
+      const snapshot = getObjectSelectionSnapshot();
+      const normalized = Array.from(new Set(
+        snapshot.objectIds.map(id => resolveTargetId(id, snapshot.objectType))
+      ));
       syncObjectParams(normalized);
-      if (ids.length > 0) setMode('selection');
     };
-    const handleMultipleSelection = (event: Event) => {
-      const detail = (event as CustomEvent).detail || {};
-      const ids: string[] = Array.isArray(detail.objectIds)
-        ? detail.objectIds.filter((id: unknown): id is string => typeof id === 'string')
-        : [];
-      const type = detail.objectType || '';
-      const normalized = Array.from(new Set(ids.map((id: string) => resolveTargetId(id, type))));
-      setSelectedObjectIds(ids);
-      setSelectedObjectType(type);
-      syncObjectParams(normalized);
-      if (ids.length > 0) setMode('selection');
-    };
-    window.addEventListener('object-selected', handleSingleSelection);
-    window.addEventListener('objects-selected', handleMultipleSelection);
+    window.addEventListener('project-loaded', handleProjectLoaded);
+    window.addEventListener('project-state-restored', handleProjectLoaded);
     return () => {
-      window.removeEventListener('object-selected', handleSingleSelection);
-      window.removeEventListener('objects-selected', handleMultipleSelection);
+      window.removeEventListener('project-loaded', handleProjectLoaded);
+      window.removeEventListener('project-state-restored', handleProjectLoaded);
     };
-  }, [syncObjectParams, resolveTargetId]);
+  }, [resolveTargetId, syncGlobalParams, syncObjectParams]);
 
   const applyGlobalParams = (next: Record<string, unknown>) => {
     setGlobalParams(next);
@@ -96,15 +97,13 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
 
   const applyObjectParams = (next: Record<string, unknown>) => {
     if (!engine || targetIds.length === 0) return;
-    targetIds.forEach(id => engine.updateObjectParameters(id, next));
+    engine.updateMultipleObjectParameters(targetIds, next);
     setObjectParams(next);
   };
 
   const clearObjectSettings = () => {
     if (!engine || targetIds.length === 0) return;
-    engine.parameterManager.clearMultipleObjectParams(targetIds);
-    engine.instanceManager.updateExistingInstances(targetIds);
-    engine.instanceManager.update(engine.currentTime);
+    engine.clearSelectedObjectParams(targetIds);
     syncObjectParams(targetIds);
   };
 

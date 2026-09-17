@@ -95,6 +95,24 @@ export class FileManager {
     
     throw new Error('Load cancelled by user');
   }
+
+  async exportSrt(content: string, defaultFileName: string = 'lyrics.srt'): Promise<string | null> {
+    const safeBaseName = path.basename(defaultFileName, path.extname(defaultFileName)) || 'lyrics';
+    const result = await dialog.showSaveDialog({
+      title: 'Export SubRip Subtitle',
+      defaultPath: `${safeBaseName}.srt`,
+      filters: [
+        { name: 'SubRip Subtitle', extensions: ['srt'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (result.canceled || !result.filePath) return null;
+
+    const utf8Content = content.startsWith('\uFEFF') ? content : `\uFEFF${content}`;
+    await fs.writeFile(result.filePath, utf8Content, 'utf-8');
+    return result.filePath;
+  }
   
   async selectMediaFile(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo> {
     const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv', '3gp'];
@@ -253,6 +271,15 @@ export function setupFileHandlers() {
       return await fileManager.selectMediaFile(type);
     } catch (error) {
       console.error(`Failed to select ${type} file:`, error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('file:export-srt', async (_event, content: string, defaultFileName?: string) => {
+    try {
+      return await fileManager.exportSrt(content, defaultFileName);
+    } catch (error) {
+      console.error('Failed to export SRT:', error);
       throw error;
     }
   });

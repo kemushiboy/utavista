@@ -7,6 +7,8 @@ import { calculateCharacterIndices } from '../utils/characterIndexCalculator';
 import { StandardParameters } from '../types/StandardParameters';
 import { ParameterValidator } from '../../utils/ParameterValidator';
 import { ParameterProcessor } from '../utils/ParameterProcessor';
+import { setProjectSaveSnapshot } from './ProjectSaveStatus';
+import { FontService } from './FontService';
 
 // プロジェクトファイルのメタデータ
 export interface ProjectMetadata {
@@ -88,6 +90,41 @@ export class ProjectFileManager {
     // 固定KineticSceneテンプレートの動的項目は旧レジストリ外でも保存対象にする。
     return normalizedParams as StandardParameters;
   }
+
+  /**
+   * 保存されたフォント名を現在のPC上のファミリー名へ揃え、描画前に登録する。
+   */
+  private async prepareProjectFonts(projectData: ProjectFileData): Promise<void> {
+    const parameterData = (projectData as any).parameterData;
+    const parameterSets: Array<Record<string, any>> = [];
+
+    if (projectData.globalParams) parameterSets.push(projectData.globalParams);
+    if (parameterData?.globalDefaults) parameterSets.push(parameterData.globalDefaults);
+    Object.values(projectData.objectParams || {}).forEach(params => parameterSets.push(params));
+    Object.values(parameterData?.phrases || {}).forEach((phrase: any) => {
+      if (phrase?.parameterDiff) parameterSets.push(phrase.parameterDiff);
+    });
+
+    const fontFamilies = new Set<string>();
+    parameterSets.forEach(params => {
+      if (typeof params.fontFamily !== 'string' || !params.fontFamily.trim()) return;
+      const normalized = FontService.normalizeFontFamily(params.fontFamily);
+      params.fontFamily = normalized;
+      fontFamilies.add(normalized);
+    });
+
+    const results = await Promise.allSettled(
+      Array.from(fontFamilies, fontFamily => FontService.ensureFontLoaded(fontFamily))
+    );
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.warn(
+          `[ProjectFileManager] フォント ${Array.from(fontFamilies)[index]} の復元に失敗しました:`,
+          result.reason
+        );
+      }
+    });
+  }
   
   /**
    * プロジェクトデータを読み込み（Electron経由など）
@@ -100,6 +137,7 @@ export class ProjectFileManager {
     if (!validation.isValid) {
       throw new Error(`無効なプロジェクトファイル: ${validation.errors.join(', ')}`);
     }
+    await this.prepareProjectFonts(projectData);
     
     // 文字インデックスを計算
     const lyricsWithIndices = calculateCharacterIndices(projectData.lyricsData);
@@ -191,6 +229,7 @@ export class ProjectFileManager {
       fileName: projectData.metadata.projectName,
       globalTemplateId
     });
+    setProjectSaveSnapshot({ savedAt: projectData.metadata.modifiedAt || new Date().toISOString() });
   }
 
   /**
@@ -211,6 +250,7 @@ export class ProjectFileManager {
       
       // デバッグイベント発行
       DebugEventBus.emit('project-saved', { fileName: filePath });
+      setProjectSaveSnapshot({ savedAt: new Date().toISOString(), filePath });
       
       return filePath;
     } catch (error) {
@@ -232,6 +272,7 @@ export class ProjectFileManager {
       if (!validation.isValid) {
         throw new Error(`無効なプロジェクトファイル: ${validation.errors.join(', ')}`);
       }
+      await this.prepareProjectFonts(projectData);
       
       // 文字インデックスを計算
       const lyricsWithIndices = calculateCharacterIndices(projectData.lyricsData);
@@ -319,6 +360,7 @@ export class ProjectFileManager {
         globalTemplateId: globalTemplateId,
         globalParams: projectData.globalParams
       });
+      setProjectSaveSnapshot({ savedAt: projectData.metadata.modifiedAt || new Date().toISOString() });
       
       // UI更新のためのイベントを発火
       window.dispatchEvent(new CustomEvent('template-loaded', {

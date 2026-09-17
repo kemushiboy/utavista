@@ -19,6 +19,7 @@
     "package:all": "npm run build && electron-builder -mwl",
     "validate-parameters": "node scripts/validate-parameters.js",
     "validate-motion": "tsx scripts/validate-motion-system.ts",
+    "validate-srt": "tsx scripts/validate-srt-export.ts",
     "pre-commit": "npm run validate-parameters && npm run lint",
     "template:analyze": "tsx scripts/analyze-templates.ts",
     "template:validate": "tsx scripts/validate-templates.ts",

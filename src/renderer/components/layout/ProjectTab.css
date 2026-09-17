@@ -179,3 +179,16 @@
   padding: var(--space-sm) var(--space-md);
   color: #ffca28;
 }
+
+.subtitle-export-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.subtitle-export-settings p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  line-height: 1.5;
+}

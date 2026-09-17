@@ -19,6 +19,7 @@ export interface ProjectState {
   audioOffset?: number; // 音楽再生タイミングオフセット（ms）、デフォルトは0
   // 個別設定情報
   individualSettingsEnabled?: string[]; // 個別設定が有効化されたオブジェクトID
+  parameterData?: unknown; // ParameterManagerV2の完全なスナップショット
 }
 
 export class ProjectStateManager {
@@ -31,7 +32,21 @@ export class ProjectStateManager {
   private maxHistorySize: number = 20;
   
   constructor(initialState: ProjectState) {
-    this.currentState = { ...initialState };
+    this.currentState = this.cloneState(initialState);
+    this.stateHistory = [this.cloneState(initialState)];
+    this.historyIndex = 0;
+  }
+
+  private cloneState(state: ProjectState): ProjectState {
+    return JSON.parse(JSON.stringify(state)) as ProjectState;
+  }
+
+  private hasSameContents(left: ProjectState, right: ProjectState): boolean {
+    const stripMetadata = (state: ProjectState) => {
+      const { id: _id, timestamp: _timestamp, label: _label, ...contents } = state;
+      return contents;
+    };
+    return JSON.stringify(stripMetadata(left)) === JSON.stringify(stripMetadata(right));
   }
   
   // 現在の状態を保存
@@ -42,6 +57,12 @@ export class ProjectStateManager {
       timestamp: Date.now(),
       label
     };
+
+    const currentHistoryState = this.stateHistory[this.historyIndex];
+    if (currentHistoryState && this.hasSameContents(currentHistoryState, state)) {
+      this.currentState = this.cloneState(state);
+      return;
+    }
     
     // 履歴を保存
     if (this.historyIndex < this.stateHistory.length - 1) {
@@ -49,7 +70,7 @@ export class ProjectStateManager {
       this.stateHistory = this.stateHistory.slice(0, this.historyIndex + 1);
     }
     
-    this.stateHistory.push(state);
+    this.stateHistory.push(this.cloneState(state));
     this.historyIndex = this.stateHistory.length - 1;
     
     // 最大履歴サイズを超えた場合、古い履歴を削除
@@ -65,7 +86,7 @@ export class ProjectStateManager {
       return false;
     }
     
-    this.currentState = { ...this.stateHistory[index] };
+    this.currentState = this.cloneState(this.stateHistory[index]);
     this.historyIndex = index;
     return true;
   }
@@ -77,7 +98,7 @@ export class ProjectStateManager {
     }
     
     this.historyIndex--;
-    this.currentState = { ...this.stateHistory[this.historyIndex] };
+    this.currentState = this.cloneState(this.stateHistory[this.historyIndex]);
     return true;
   }
   
@@ -88,7 +109,7 @@ export class ProjectStateManager {
     }
     
     this.historyIndex++;
-    this.currentState = { ...this.stateHistory[this.historyIndex] };
+    this.currentState = this.cloneState(this.stateHistory[this.historyIndex]);
     return true;
   }
   
@@ -118,16 +139,12 @@ export class ProjectStateManager {
   
   // 状態のエクスポート
   exportState(): ProjectState {
-    return { ...this.currentState };
+    return this.cloneState(this.currentState);
   }
   
   // 完全な状態をエクスポート（歌詞データ含む）
   exportFullState(): ProjectState {
-    return { 
-      ...this.currentState,
-      // 歌詞データも確実に含める
-      lyricsData: this.currentState.lyricsData ? JSON.parse(JSON.stringify(this.currentState.lyricsData)) : undefined
-    };
+    return this.cloneState(this.currentState);
   }
 
   // 自動保存からステージ設定を取得する同期メソッド
@@ -143,18 +160,30 @@ export class ProjectStateManager {
       id: state.id || `state_${Date.now()}`,
       timestamp: state.timestamp || Date.now()
     };
-    this.stateHistory = [{ ...this.currentState }];
+    this.currentState = this.cloneState(this.currentState);
+    this.stateHistory = [this.cloneState(this.currentState)];
+    this.historyIndex = 0;
+  }
+
+  resetHistoryToCurrent(label?: string): void {
+    this.currentState = {
+      ...this.currentState,
+      id: `state_${Date.now()}`,
+      timestamp: Date.now(),
+      label
+    };
+    this.stateHistory = [this.cloneState(this.currentState)];
     this.historyIndex = 0;
   }
   
   // 現在の状態を取得
   getCurrentState(): ProjectState {
-    return { ...this.currentState };
+    return this.cloneState(this.currentState);
   }
   
   // 履歴状態を取得
   getStateHistory(): ProjectState[] {
-    return [...this.stateHistory];
+    return this.stateHistory.map(state => this.cloneState(state));
   }
   
   // 履歴インデックスを取得

@@ -110,6 +110,7 @@ export interface RendererToMainChannels {
   'file:save-project': (projectData: ProjectData, options?: { saveAs?: boolean }) => Promise<string>;
   'file:load-project': () => Promise<ProjectData>;
   'file:select-media': (type: 'video' | 'audio' | 'image') => Promise<MediaFileInfo>;
+  'file:export-srt': (content: string, defaultFileName?: string) => Promise<string | null>;
   'export:start': (options: ExportOptions) => Promise<void>;
   'export:cancel': () => Promise<void>;
   'export:frame-ready': (frameData: string) => void;

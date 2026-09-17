@@ -13,6 +13,7 @@ export interface ElectronAPI {
   saveProject(projectData: ProjectData, options?: { saveAs?: boolean }): Promise<string>;
   loadProject(): Promise<ProjectData>;
   selectMedia(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo>;
+  exportSrt(content: string, defaultFileName?: string): Promise<string | null>;
   
   // Video export (legacy)
   startExport(options: ExportOptions): Promise<void>;

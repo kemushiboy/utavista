@@ -20,6 +20,9 @@ const electronAPI = {
   
   selectMedia: (type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo> =>
     ipcRenderer.invoke('file:select-media', type),
+
+  exportSrt: (content: string, defaultFileName?: string): Promise<string | null> =>
+    ipcRenderer.invoke('file:export-srt', content, defaultFileName),
   
   // Video export (legacy)
   startExport: (options: ExportOptions): Promise<void> => 

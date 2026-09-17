@@ -191,8 +191,9 @@ function App() {
         }
       }
       // Ctrl+Z: Undo
-      else if (event.ctrlKey && event.key === 'z' && !event.shiftKey) {
+      else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) {
         event.preventDefault();
+        event.stopPropagation();
         if (engineRef.current) {
           const success = engineRef.current.undo();
           if (success) {
@@ -201,9 +202,10 @@ function App() {
         }
       }
       // Ctrl+Shift+Z または Ctrl+Y: Redo
-      else if ((event.ctrlKey && event.shiftKey && event.key === 'Z') || 
-               (event.ctrlKey && event.key === 'y')) {
+      else if (((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') ||
+               ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y')) {
         event.preventDefault();
+        event.stopPropagation();
         if (engineRef.current) {
           const success = engineRef.current.redo();
           if (success) {

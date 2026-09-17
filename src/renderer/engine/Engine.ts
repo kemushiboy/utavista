@@ -432,6 +432,21 @@ export class Engine {
         this.autoSaveToLocalStorage();
         console.log('Engine.loadLyrics: ローカルストレージへの自動保存が完了しました');
       }
+
+      // 読み込み完了時点をUndoの基準状態にする。
+      const parameterData = this.parameterManager.exportCompressed();
+      this.projectStateManager.updateCurrentState({
+        lyricsData: JSON.parse(JSON.stringify(this.phrases)),
+        currentTime: this.currentTime,
+        templateAssignments: this.templateManager.exportAssignments(),
+        globalParams: this.parameterManager.getGlobalDefaults(),
+        objectParams: parameterData.phrases as Record<string, Record<string, any>>,
+        individualSettingsEnabled: this.parameterManager.getIndividualSettingsEnabled(),
+        parameterData,
+        defaultTemplateId: this.templateManager.getDefaultTemplateId()
+      });
+      this.projectStateManager.resetHistoryToCurrent('歌詞読み込み完了');
+      this.dispatchUndoRedoStateChanged();
       
       console.log('Engine.loadLyrics: 歌詞データのロードが正常に完了しました');
     } catch (error) {
@@ -1515,6 +1530,7 @@ export class Engine {
         individualSettingsEnabled: paramExport.individualSettingsEnabled || [],
         defaultTemplateId: this.templateManager.getDefaultTemplateId()
       });
+      this.saveUndoState('個別シーン設定の解除');
       
       return true;
     } catch (error) {
@@ -2400,16 +2416,6 @@ export class Engine {
         return false;
       }
       
-      // 現在の状態を更新してからUndoを実行
-      this.projectStateManager.updateCurrentState({
-        lyricsData: JSON.parse(JSON.stringify(this.phrases)),
-        currentTime: this.currentTime,
-        templateAssignments: this.templateManager.exportAssignments(),
-        globalParams: this.parameterManager.getGlobalDefaults(),
-        objectParams: this.parameterManager.exportCompressed().phrases || {},
-        defaultTemplateId: this.templateManager.getDefaultTemplateId()
-      });
-      
       // Undoを実行
       const success = this.projectStateManager.undo();
       
@@ -2417,6 +2423,7 @@ export class Engine {
         // 状態を復元
         const restoredState = this.projectStateManager.getCurrentState();
         this.restoreProjectState(restoredState);
+        this.dispatchUndoRedoStateChanged();
       }
       
       return success;
@@ -2444,6 +2451,7 @@ export class Engine {
         // 状態を復元
         const restoredState = this.projectStateManager.getCurrentState();
         this.restoreProjectState(restoredState);
+        this.dispatchUndoRedoStateChanged();
       }
       
       return success;
@@ -2468,6 +2476,33 @@ export class Engine {
   canRedo(): boolean {
     return this.projectStateManager.canRedo();
   }
+
+  /** 現在の編集状態をUndo/Redo履歴へ確定する。 */
+  saveUndoState(label: string): void {
+    const parameterData = this.parameterManager.exportCompressed();
+    this.projectStateManager.updateCurrentState({
+      lyricsData: JSON.parse(JSON.stringify(this.phrases)),
+      currentTime: this.currentTime,
+      templateAssignments: this.templateManager.exportAssignments(),
+      globalParams: this.parameterManager.getGlobalDefaults(),
+      objectParams: parameterData.phrases as Record<string, Record<string, any>>,
+      individualSettingsEnabled: this.parameterManager.getIndividualSettingsEnabled(),
+      parameterData,
+      defaultTemplateId: this.templateManager.getDefaultTemplateId(),
+      backgroundConfig: this.backgroundConfig,
+      stageConfig: this.stageConfig,
+      audioFileName: this.audioFileName,
+      audioFileDuration: this.audioDuration
+    });
+    this.projectStateManager.saveCurrentState(label);
+    this.dispatchUndoRedoStateChanged();
+  }
+
+  private dispatchUndoRedoStateChanged(): void {
+    window.dispatchEvent(new CustomEvent('undo-redo-state-changed', {
+      detail: { canUndo: this.canUndo(), canRedo: this.canRedo() }
+    }));
+  }
   
   /**
    * プロジェクト状態を復元する
@@ -2475,22 +2510,18 @@ export class Engine {
    */
   private restoreProjectState(state: import('./ProjectStateManager').ProjectState): void {
     try {
-      
-      // 歌詞データの復元
-      if (state.lyricsData) {
-        this.phrases = JSON.parse(JSON.stringify(state.lyricsData));
-        this.charPositions.clear();
-        this.arrangeCharsOnStage();
-        this.instanceManager.loadPhrases(this.phrases, this.charPositions);
-      }
-      
+      // Undo後に古い非同期パラメータ更新が再適用されるのを防ぐ。
+      this.optimizedUpdater.cancelPendingUpdates();
+
       // テンプレート割り当ての復元
       if (state.templateAssignments) {
         this.templateManager.importAssignments(state.templateAssignments);
       }
       
       // パラメータの完全復元（改善版）
-      if (state.globalParams || state.objectParams) {
+      if (state.parameterData) {
+        this.parameterManager.importCompressed(state.parameterData as any);
+      } else if (state.globalParams || state.objectParams) {
         // ParameterManagerの完全復元メソッドを使用
         this.parameterManager.restoreCompleteState({
           global: state.globalParams,
@@ -2503,6 +2534,14 @@ export class Engine {
           this.parameterManager.updateGlobalDefaults(state.globalParams);
         }
         
+      }
+
+      // 復元したパラメータを使って文字配置を再計算する。
+      if (state.lyricsData) {
+        this.phrases = JSON.parse(JSON.stringify(state.lyricsData));
+        this.charPositions.clear();
+        this.arrangeCharsOnStage();
+        this.instanceManager.loadPhrases(this.phrases, this.charPositions);
       }
       
       // デフォルトテンプレートの復元
@@ -2531,6 +2570,7 @@ export class Engine {
       
       // タイムライン更新イベントを発火
       this.dispatchTimelineUpdatedEvent();
+      window.dispatchEvent(new CustomEvent('project-state-restored'));
       
     } catch (error) {
       console.error('Engine: プロジェクト状態復元エラー:', error);
@@ -4226,11 +4266,21 @@ export class Engine {
   }
 
   /** シーン設定プリセットをフレーズ・単語・文字の任意オブジェクトへ割り当てる。 */
-  public updateObjectParameters(objectId: string, params: Partial<StandardParameters>): void {
+  public updateObjectParameters(
+    objectId: string,
+    params: Partial<StandardParameters>,
+    saveHistory: boolean = true
+  ): void {
     this.parameterManager.enableIndividualSetting(objectId);
     this.parameterManager.updateParameters(objectId, params);
     this.instanceManager.updateExistingInstances([objectId]);
     this.instanceManager.update(this.currentTime);
+    if (saveHistory) this.saveUndoState('オブジェクトのシーン設定変更');
+  }
+
+  public updateMultipleObjectParameters(objectIds: string[], params: Partial<StandardParameters>): void {
+    objectIds.forEach(objectId => this.updateObjectParameters(objectId, params, false));
+    this.saveUndoState('複数オブジェクトのシーン設定変更');
   }
   
   /**
@@ -4297,6 +4347,7 @@ export class Engine {
         globalParams: { ...currentState.globalParams, ...params }
       });
     }
+    this.saveUndoState('基本シーン設定変更');
   }
   
   /**

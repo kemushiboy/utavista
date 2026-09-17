@@ -5,6 +5,7 @@ import { TemplateManager } from './TemplateManager';
 import { InstanceManager } from './InstanceManager';
 import { ParameterProcessor } from '../utils/ParameterProcessor';
 import { IAnimationTemplate } from '../types/types';
+import { FontService } from '../services/FontService';
 import { 
   NormalizedProjectData, 
   ProjectFileData, 
@@ -63,6 +64,9 @@ export class UnifiedRestoreManager {
         console.warn('UnifiedRestoreManager: データが不完全のためサニタイズします');
         normalizedData = ProjectDataNormalizer.sanitizeNormalizedData(normalizedData);
       }
+
+      // 自動保存からの復元でも、文字インスタンス生成前に実フォントを登録する。
+      await this.prepareProjectFonts(normalizedData);
 
       // 2. ステージ設定の復元
       await this.restoreStageConfig(normalizedData.stageConfig);
@@ -192,6 +196,39 @@ export class UnifiedRestoreManager {
       console.error('UnifiedRestoreManager: 統一復元処理エラー:', error);
       return false;
     }
+  }
+
+  private async prepareProjectFonts(normalizedData: NormalizedProjectData): Promise<void> {
+    const parameterSets: Array<Record<string, any>> = [
+      normalizedData.globalParams,
+      normalizedData.templateParams,
+      ...Object.values(normalizedData.objectParams || {})
+    ];
+    const parameterData = normalizedData.parameterData;
+    if (parameterData?.globalDefaults) parameterSets.push(parameterData.globalDefaults);
+    Object.values(parameterData?.phrases || {}).forEach((phrase: any) => {
+      if (phrase?.parameterDiff) parameterSets.push(phrase.parameterDiff);
+    });
+
+    const fontFamilies = new Set<string>();
+    parameterSets.forEach(params => {
+      if (!params || typeof params.fontFamily !== 'string' || !params.fontFamily.trim()) return;
+      const normalized = FontService.normalizeFontFamily(params.fontFamily);
+      params.fontFamily = normalized;
+      fontFamilies.add(normalized);
+    });
+
+    const results = await Promise.allSettled(
+      Array.from(fontFamilies, fontFamily => FontService.ensureFontLoaded(fontFamily))
+    );
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.warn(
+          `[UnifiedRestoreManager] フォント ${Array.from(fontFamilies)[index]} の復元に失敗しました:`,
+          result.reason
+        );
+      }
+    });
   }
 
   /**

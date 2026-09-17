@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import '../../styles/components.css';
 import Engine from '../../engine/Engine';
 
@@ -25,6 +25,14 @@ const ZoomControls: React.FC<ZoomControlsProps> = ({
   zoomLevels,
   engine
 }) => {
+  const [, refreshHistoryState] = useState(0);
+
+  useEffect(() => {
+    const handleHistoryChange = () => refreshHistoryState(value => value + 1);
+    window.addEventListener('undo-redo-state-changed', handleHistoryChange);
+    return () => window.removeEventListener('undo-redo-state-changed', handleHistoryChange);
+  }, []);
+
   const formatTime = (ms: number): string => {
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
