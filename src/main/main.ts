@@ -3,10 +3,15 @@ import type { BrowserWindow as BrowserWindowType } from 'electron';
 const { app, BrowserWindow, ipcMain } = electron;
 import * as path from 'path';
 import { initFileLogger } from './logging';
-import { setupFileHandlers } from './fileManager';
+import { fileManager, setupFileHandlers } from './fileManager';
 import { setupExportHandlers } from './exportManager';
 import { fontManager } from './fontManager';
 import { persistenceManager } from './persistenceManager';
+
+function findProjectPath(args: string[]): string | null {
+  const candidate = args.find(arg => path.extname(arg).toLowerCase() === '.uta');
+  return candidate ? path.resolve(candidate) : null;
+}
 
 // ---- Startup GPU/Compositor safety switches (must be set before app ready) ----
 // macOS 15.x + Chromium can crash WindowServer with CALayer overlays
@@ -29,6 +34,7 @@ try {
 
 class ElectronApp {
   private mainWindow: BrowserWindowType | null = null;
+  private pendingProjectPath: string | null = null;
   
   async initialize() {
     await app.whenReady();
@@ -105,6 +111,10 @@ class ElectronApp {
     this.mainWindow.webContents.on('render-process-gone', (_event, details) => {
       console.error('Renderer process exited:', details);
     });
+
+    this.mainWindow.webContents.on('did-finish-load', () => {
+      this.notifyPendingProject();
+    });
     
     // Window event handlers
     this.mainWindow.on('closed', () => {
@@ -127,6 +137,15 @@ class ElectronApp {
     
     ipcMain.handle('app:get-path', (event, name: string) => {
       return app.getPath(name as any);
+    });
+
+    ipcMain.handle('file:consume-pending-project', async () => {
+      const projectPath = this.pendingProjectPath;
+      if (!projectPath) return null;
+
+      const projectData = await fileManager.loadProjectFromPath(projectPath);
+      this.pendingProjectPath = null;
+      return projectData;
     });
     
     // GPU/システムメモリ情報取得ハンドラ
@@ -383,11 +402,45 @@ class ElectronApp {
   getMainWindow(): BrowserWindowType | null {
     return this.mainWindow;
   }
+
+  queueProjectOpen(projectPath: string | null): void {
+    if (!projectPath) return;
+    this.pendingProjectPath = path.resolve(projectPath);
+    this.notifyPendingProject();
+
+    if (this.mainWindow) {
+      if (this.mainWindow.isMinimized()) this.mainWindow.restore();
+      this.mainWindow.show();
+      this.mainWindow.focus();
+    }
+  }
+
+  private notifyPendingProject(): void {
+    if (!this.pendingProjectPath || !this.mainWindow || this.mainWindow.isDestroyed()) return;
+    this.mainWindow.webContents.send('file:open-project-requested');
+  }
 }
 
 // Initialize the application
 const electronApp = new ElectronApp();
-electronApp.initialize().catch(console.error);
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  electronApp.queueProjectOpen(findProjectPath(process.argv));
+
+  app.on('second-instance', (_event, commandLine) => {
+    electronApp.queueProjectOpen(findProjectPath(commandLine));
+  });
+
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    electronApp.queueProjectOpen(filePath);
+  });
+
+  electronApp.initialize().catch(console.error);
+}
 
 // Export for use by other modules
 export { electronApp };

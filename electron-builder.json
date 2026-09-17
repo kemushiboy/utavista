@@ -17,6 +17,14 @@
       "filter": ["**/*"]
     }
   ],
+  "fileAssociations": [
+    {
+      "ext": "uta",
+      "name": "UTAVISTA Project",
+      "description": "UTAVISTA project file",
+      "role": "Editor"
+    }
+  ],
   "mac": {
     "category": "public.app-category.video",
     "target": [

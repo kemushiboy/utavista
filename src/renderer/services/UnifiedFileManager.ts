@@ -65,6 +65,15 @@ export class UnifiedFileManager {
     }
   }
 
+  async consumePendingProject(): Promise<ProjectData | null> {
+    try {
+      return await this.electronAPI.consumePendingProject();
+    } catch (error) {
+      console.error('UnifiedFileManager: 起動時プロジェクト読み込みエラー:', error);
+      throw new Error(`指定されたプロジェクトの読み込みに失敗しました: ${error}`);
+    }
+  }
+
   /** 背景画像ファイル選択 */
   async selectImageFile(): Promise<MediaFileInfo> {
     try {

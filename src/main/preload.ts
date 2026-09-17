@@ -17,6 +17,15 @@ const electronAPI = {
   
   loadProject: (): Promise<ProjectData> => 
     ipcRenderer.invoke('file:load-project'),
+
+  consumePendingProject: (): Promise<ProjectData | null> =>
+    ipcRenderer.invoke('file:consume-pending-project'),
+
+  onProjectOpenRequested: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('file:open-project-requested', listener);
+    return () => ipcRenderer.removeListener('file:open-project-requested', listener);
+  },
   
   selectMedia: (type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo> =>
     ipcRenderer.invoke('file:select-media', type),

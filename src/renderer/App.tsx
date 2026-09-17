@@ -74,6 +74,7 @@ function App() {
   const lastTimeRef = useRef<number>(0);
   const frameCountRef = useRef<number>(0);
   const saveInProgressRef = useRef(false);
+  const externalProjectLoadInProgressRef = useRef(false);
   const saveNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [projectSaveNotice, setProjectSaveNotice] = useState<ProjectSaveNotice | null>(null);
   
@@ -394,6 +395,44 @@ function App() {
       window.clearTimeout(initializationTimer);
     };
   }, [fontServiceReady]); // FontService初期化完了後に実行
+
+  // Windowsの関連付けや「プログラムから開く」で渡された.utaを、Engine準備後に読み込む。
+  useEffect(() => {
+    if (!engineReady || !engineRef.current) return;
+
+    const electronAPI = (window as any).electronAPI;
+    if (!electronAPI?.consumePendingProject) return;
+
+    let disposed = false;
+    const loadPendingProject = async () => {
+      if (disposed || externalProjectLoadInProgressRef.current || !engineRef.current) return;
+      externalProjectLoadInProgressRef.current = true;
+      try {
+        while (!disposed && engineRef.current) {
+          const projectData = await electronAPI.consumePendingProject();
+          if (!projectData || disposed || !engineRef.current) break;
+          await new ProjectFileManager(engineRef.current).loadProjectData(projectData);
+        }
+      } catch (error) {
+        console.error('[App] 関連付けされたプロジェクトの読み込みに失敗しました:', error);
+        setProjectSaveNotice({ type: 'error', message: '指定されたプロジェクトを開けませんでした' });
+        if (saveNoticeTimerRef.current) clearTimeout(saveNoticeTimerRef.current);
+        saveNoticeTimerRef.current = setTimeout(() => setProjectSaveNotice(null), 4000);
+      } finally {
+        externalProjectLoadInProgressRef.current = false;
+      }
+    };
+
+    const unsubscribe = electronAPI.onProjectOpenRequested?.(() => {
+      void loadPendingProject();
+    });
+    void loadPendingProject();
+
+    return () => {
+      disposed = true;
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [engineReady]);
   
   // テンプレート変更の処理（エンジンを再初期化せずテンプレートのみ変更）
   useEffect(() => {

@@ -9,6 +9,10 @@ export class FileManager {
   private currentProjectCreatedAt: string | null = null;
 
   async saveProject(projectData: ProjectData, options: { saveAs?: boolean } = {}): Promise<string> {
+    if (!projectData.postEffectConfig) {
+      throw new Error('共通Post FX設定がプロジェクトデータに含まれていません');
+    }
+
     let filePath = !options.saveAs ? this.currentProjectPath : null;
     if (!filePath) {
       const result = await dialog.showSaveDialog({
@@ -55,45 +59,49 @@ export class FileManager {
       properties: ['openFile']
     });
     
-    if (filePaths.length > 0) {
-      const content = await fs.readFile(filePaths[0], 'utf-8');
-      
-      try {
-        const projectFileData = JSON.parse(content);
-        
-        // ProjectFileData形式の基本的な検証（緩い検証）
-        if (!projectFileData.metadata && !projectFileData.version) {
-          console.warn('Project file missing metadata, applying defaults');
-          projectFileData.metadata = {
-            projectName: path.basename(filePaths[0], path.extname(filePaths[0])),
-            createdAt: new Date().toISOString(),
-            modifiedAt: new Date().toISOString()
-          };
-        }
-        
-        if (!projectFileData.version) {
-          console.warn('Project file missing version, applying default');
-          projectFileData.version = '0.1.0';
-        }
-        
-        // ProjectData形式に変換（互換性のため）
-        const projectData: ProjectData = {
-          id: `project_${Date.now()}`,
-          name: projectFileData.metadata?.projectName || path.basename(filePaths[0], path.extname(filePaths[0])),
-          ...projectFileData
-        };
-        this.currentProjectPath = filePaths[0];
-        this.currentProjectCreatedAt = projectData.metadata?.createdAt || null;
-        return projectData;
-        
-      } catch (parseError) {
-        console.error('Failed to parse project file:', parseError);
-        const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown error';
-        throw new Error(`Invalid project file format: ${errorMessage}`);
-      }
-    }
-    
+    if (filePaths.length > 0) return this.loadProjectFromPath(filePaths[0]);
+
     throw new Error('Load cancelled by user');
+  }
+
+  async loadProjectFromPath(filePath: string): Promise<ProjectData> {
+    if (path.extname(filePath).toLowerCase() !== '.uta') {
+      throw new Error('UTAVISTAプロジェクト（.uta）ではありません');
+    }
+
+    const content = await fs.readFile(filePath, 'utf-8');
+
+    try {
+      const projectFileData = JSON.parse(content);
+
+      // ProjectFileData形式の基本的な検証（緩い検証）
+      if (!projectFileData.metadata && !projectFileData.version) {
+        console.warn('Project file missing metadata, applying defaults');
+        projectFileData.metadata = {
+          projectName: path.basename(filePath, path.extname(filePath)),
+          createdAt: new Date().toISOString(),
+          modifiedAt: new Date().toISOString()
+        };
+      }
+
+      if (!projectFileData.version) {
+        console.warn('Project file missing version, applying default');
+        projectFileData.version = '0.1.0';
+      }
+
+      const projectData: ProjectData = {
+        id: `project_${Date.now()}`,
+        name: projectFileData.metadata?.projectName || path.basename(filePath, path.extname(filePath)),
+        ...projectFileData
+      };
+      this.currentProjectPath = filePath;
+      this.currentProjectCreatedAt = projectData.metadata?.createdAt || null;
+      return projectData;
+    } catch (parseError) {
+      console.error('Failed to parse project file:', parseError);
+      const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown error';
+      throw new Error(`Invalid project file format: ${errorMessage}`);
+    }
   }
 
   async exportSrt(content: string, defaultFileName: string = 'lyrics.srt'): Promise<string | null> {
@@ -246,8 +254,6 @@ export class FileManager {
 }
 
 export function setupFileHandlers() {
-  const fileManager = new FileManager();
-  
   ipcMain.handle('file:save-project', async (event, projectData: ProjectData, options?: { saveAs?: boolean }) => {
     try {
       return await fileManager.saveProject(projectData, options);
@@ -340,3 +346,5 @@ export function setupFileHandlers() {
     }
   });
 }
+
+export const fileManager = new FileManager();

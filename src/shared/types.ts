@@ -7,6 +7,7 @@ export interface ProjectData {
   templates: Record<string, string>;
   parameters: Record<string, any>;
   timing: any;
+  postEffectConfig?: Record<string, number | boolean>;
   metadata: {
     createdAt: string;
     modifiedAt: string;
@@ -99,6 +100,7 @@ export interface TemplateInfo {
 // IPC Channel definitions
 export interface MainToRendererChannels {
   'file:project-loaded': (projectData: ProjectData) => void;
+  'file:open-project-requested': () => void;
   'file:media-loaded': (mediaInfo: MediaFileInfo) => void;
   'export:progress': (progress: ExportProgress) => void;
   'export:completed': (outputPath: string) => void;
@@ -109,6 +111,7 @@ export interface MainToRendererChannels {
 export interface RendererToMainChannels {
   'file:save-project': (projectData: ProjectData, options?: { saveAs?: boolean }) => Promise<string>;
   'file:load-project': () => Promise<ProjectData>;
+  'file:consume-pending-project': () => Promise<ProjectData | null>;
   'file:select-media': (type: 'video' | 'audio' | 'image') => Promise<MediaFileInfo>;
   'file:export-srt': (content: string, defaultFileName?: string) => Promise<string | null>;
   'export:start': (options: ExportOptions) => Promise<void>;

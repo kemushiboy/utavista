@@ -12,6 +12,8 @@ export interface ElectronAPI {
   // File management
   saveProject(projectData: ProjectData, options?: { saveAs?: boolean }): Promise<string>;
   loadProject(): Promise<ProjectData>;
+  consumePendingProject(): Promise<ProjectData | null>;
+  onProjectOpenRequested(callback: () => void): () => void;
   selectMedia(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo>;
   exportSrt(content: string, defaultFileName?: string): Promise<string | null>;
   

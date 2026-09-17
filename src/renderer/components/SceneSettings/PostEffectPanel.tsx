@@ -10,6 +10,7 @@ const POST_EFFECT_CONFIG: ParamConfig[] = [
   { name: 'zoom', type: 'number', default: 0, min: -0.25, max: 0.6, step: 0.01, label: 'ズーム' },
   { name: 'tilt', type: 'number', default: 0, min: -0.35, max: 0.35, step: 0.01, label: '傾き' },
   { name: 'glitch', type: 'number', default: 0, min: 0, max: 1, step: 0.01, label: 'グリッチ' },
+  { name: 'horizontalWarp', type: 'number', default: 0, min: 0, max: 1, step: 0.01, label: '水平うねり' },
   { name: 'hueShift', type: 'number', default: 0, min: -180, max: 180, step: 1, label: '色相回転' },
   { name: 'chromaticAberration', type: 'number', default: 0, min: 0, max: 1, step: 0.01, label: '色収差' },
   { name: 'vignette', type: 'number', default: 0, min: 0, max: 1, step: 0.01, label: 'ビネット' },

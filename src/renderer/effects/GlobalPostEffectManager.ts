@@ -7,6 +7,7 @@ export interface GlobalPostEffectConfig {
   zoom: number;
   tilt: number;
   glitch: number;
+  horizontalWarp: number;
   hueShift: number;
   chromaticAberration: number;
   vignette: number;
@@ -23,6 +24,7 @@ export const DEFAULT_POST_EFFECT_CONFIG: GlobalPostEffectConfig = {
   zoom: 0,
   tilt: 0,
   glitch: 0,
+  horizontalWarp: 0,
   hueShift: 0,
   chromaticAberration: 0,
   vignette: 0,
@@ -32,15 +34,17 @@ export const DEFAULT_POST_EFFECT_CONFIG: GlobalPostEffectConfig = {
   contrast: 1
 };
 
-const fragmentShader = `
+const fragmentShader = `precision highp float;
 varying vec2 vTextureCoord;
 uniform sampler2D uSampler;
 uniform float uTime;
+uniform float uGlitchSeed;
 uniform float uMaster;
 uniform float uShake;
 uniform float uZoom;
 uniform float uTilt;
 uniform float uGlitch;
+uniform float uHorizontalWarp;
 uniform float uHue;
 uniform float uChromatic;
 uniform float uVignette;
@@ -51,6 +55,12 @@ uniform float uContrast;
 
 float hash(vec2 value) {
   return fract(sin(dot(value, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float hash3(vec3 value) {
+  value = fract(value * vec3(0.1031, 0.1030, 0.0973));
+  value += dot(value, value.yzx + 33.33);
+  return fract((value.x + value.y) * value.z);
 }
 
 vec3 hueRotate(vec3 color, float angle) {
@@ -87,12 +97,48 @@ void main(void) {
   ) * uShake * master * 0.004;
   uv += shakeOffset;
 
-  float band = floor(uv.y * (28.0 + uGlitch * 70.0));
+  float glitchStrength = max(0.0, uGlitch * master);
+  float horizontalWarpStrength = max(0.0, uHorizontalWarp * master);
+  float bandCount = floor(28.0 + uGlitch * 70.0);
+  float band = floor(uv.y * bandCount);
   float frame = floor(uTime * 18.0);
-  float bandNoise = hash(vec2(band, frame));
-  if (bandNoise > 1.0 - uGlitch * master * 0.42) {
-    uv.x += (hash(vec2(band + 3.7, frame)) - 0.5) * uGlitch * master * 0.13;
-  }
+  // フレーム番号はTypeScript側で整数ハッシュ化し、精度の安全な範囲で受け取る。
+  float frameSeed = uGlitchSeed;
+  float bandNoise = hash3(vec3(
+    band + frameSeed * 97.1,
+    19.19 + frameSeed * 37.0,
+    band * 0.17 + frameSeed * 79.19
+  ));
+
+  // デジタルグリッチは、フレームごとにランダム選択した水平スライスだけをずらす。
+  float glitchProbability = step(0.000001, glitchStrength)
+    * (0.12 + sqrt(min(glitchStrength, 1.0)) * 0.38);
+  float glitchBand = step(1.0 - glitchProbability, bandNoise);
+  float displacementNoise = hash3(vec3(
+    band + frameSeed * 31.3,
+    73.7 + frameSeed * 43.0,
+    band * 0.29 + frameSeed * 35.71
+  ));
+  float displacementDirection = displacementNoise < 0.5 ? -1.0 : 1.0;
+  float glitchMagnitude = mix(0.45, 1.0, abs(displacementNoise * 2.0 - 1.0));
+  uv.x += displacementDirection * glitchMagnitude * glitchStrength * 0.075 * glitchBand;
+
+  // これまでの全帯が連続して揺れる表現は、独立した「水平うねり」として残す。
+  float warpBandCount = floor(28.0 + uHorizontalWarp * 70.0);
+  float warpBand = floor(uv.y * warpBandCount);
+  float warpNoise = hash3(vec3(
+    warpBand + frameSeed * 97.1,
+    19.19 + frameSeed * 37.0,
+    warpBand * 0.17 + frameSeed * 79.19
+  ));
+  float warpDirectionNoise = hash3(vec3(
+    warpBand + frameSeed * 31.3,
+    73.7 + frameSeed * 43.0,
+    warpBand * 0.29 + frameSeed * 35.71
+  ));
+  float warpDirection = warpDirectionNoise < 0.5 ? -1.0 : 1.0;
+  float warpMagnitude = mix(0.35, 1.0, warpNoise);
+  uv.x += warpDirection * warpMagnitude * horizontalWarpStrength * 0.0325;
 
   float rgbOffset = (uChromatic + uGlitch * 0.35) * master * 0.012;
   float red = texture2D(uSampler, uv + vec2(rgbOffset, 0.0)).r;
@@ -121,6 +167,18 @@ function numberValue(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+/** 論理フレーム番号を、シェーダーへ安全に渡せる決定論的な0〜1の値へ変換する。 */
+function frameSeedFromTime(timeMs: number): number {
+  const frame = Math.floor(Math.max(0, timeMs) * 60 / 1000) >>> 0;
+  let value = frame;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d);
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b);
+  value ^= value >>> 16;
+  return (value >>> 0) / 0x100000000;
+}
+
 function normalizeConfig(value: Partial<GlobalPostEffectConfig>): GlobalPostEffectConfig {
   return {
     enabled: value.enabled === true,
@@ -129,6 +187,7 @@ function normalizeConfig(value: Partial<GlobalPostEffectConfig>): GlobalPostEffe
     zoom: numberValue(value.zoom, 0),
     tilt: numberValue(value.tilt, 0),
     glitch: numberValue(value.glitch, 0),
+    horizontalWarp: numberValue(value.horizontalWarp, 0),
     hueShift: numberValue(value.hueShift, 0),
     chromaticAberration: numberValue(value.chromaticAberration, 0),
     vignette: numberValue(value.vignette, 0),
@@ -150,11 +209,13 @@ export class GlobalPostEffectManager {
     this.config = { ...DEFAULT_POST_EFFECT_CONFIG };
     this.filter = new PIXI.Filter(undefined, fragmentShader, {
       uTime: 0,
+      uGlitchSeed: 0,
       uMaster: 1,
       uShake: 0,
       uZoom: 0,
       uTilt: 0,
       uGlitch: 0,
+      uHorizontalWarp: 0,
       uHue: 0,
       uChromatic: 0,
       uVignette: 0,
@@ -178,13 +239,18 @@ export class GlobalPostEffectManager {
   }
 
   update(timeMs: number): void {
+    // GPUコンテキスト復帰や他エフェクトのfilters更新で外れた場合も、描画前に自己修復する。
+    this.syncFilterAttachment();
+
     const uniforms = this.filter.uniforms;
     uniforms.uTime = Math.max(0, timeMs) / 1000;
+    uniforms.uGlitchSeed = frameSeedFromTime(timeMs);
     uniforms.uMaster = this.config.masterIntensity;
     uniforms.uShake = this.config.shake;
     uniforms.uZoom = this.config.zoom;
     uniforms.uTilt = this.config.tilt;
     uniforms.uGlitch = this.config.glitch;
+    uniforms.uHorizontalWarp = this.config.horizontalWarp;
     uniforms.uHue = this.config.hueShift * Math.PI / 180;
     uniforms.uChromatic = this.config.chromaticAberration;
     uniforms.uVignette = this.config.vignette;
@@ -206,7 +272,9 @@ export class GlobalPostEffectManager {
   private syncFilterAttachment(): void {
     const filters = this.target.filters || [];
     const containsFilter = filters.includes(this.filter);
-    if (this.config.enabled && !containsFilter) this.target.filters = [...filters, this.filter];
+    if (this.config.enabled && !containsFilter) {
+      this.target.filters = [...filters, this.filter];
+    }
     if (!this.config.enabled && containsFilter) this.target.filters = filters.filter(filter => filter !== this.filter);
   }
 
