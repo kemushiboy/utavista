@@ -6,6 +6,8 @@ import { ModernVideoExportOptions } from '../../export/video/VideoExporter';
 import { Button, Select, Input, Section, StatusMessage } from '../common';
 import './ProjectTab.css';
 import { WebCodecsLockstepExporter } from '../../export';
+import { createSrt } from '../../utils/SrtExporter';
+import { getProjectSaveSnapshot, subscribeProjectSaveStatus } from '../../services/ProjectSaveStatus';
 
 interface ProjectTabProps {
   engine: Engine;
@@ -21,7 +23,10 @@ type ExtendedAspectRatio = '16:9' | '4:3' | '1:1' | '9:16' | '3:4' | '6:19';
 
 const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   // 保存・読み込み関連の状態
-  const [lastSaved, setLastSaved] = useState<string>('');
+  const [lastSaved, setLastSaved] = useState<string>(() => {
+    const snapshot = getProjectSaveSnapshot();
+    return snapshot ? new Date(snapshot.savedAt).toLocaleString('ja-JP') : '';
+  });
   const [status, setStatus] = useState<string>('');
   const [statusType, setStatusType] = useState<'success' | 'error' | 'info'>('info');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -45,6 +50,12 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [memoryUsage, setMemoryUsage] = useState<number | undefined>();
   const [exportError, setExportError] = useState<string | null>(null);
+  const [isExportingSrt, setIsExportingSrt] = useState(false);
+  const [srtStatus, setSrtStatus] = useState('');
+  const [srtStatusType, setSrtStatusType] = useState<'success' | 'error' | 'info'>('info');
+  const [isExportingPng, setIsExportingPng] = useState(false);
+  const [pngStatus, setPngStatus] = useState('');
+  const [pngStatusType, setPngStatusType] = useState<'success' | 'error' | 'info'>('info');
   // ロックステップエクスポーター参照（キャンセル対応）
   const exporterRef = useRef<WebCodecsLockstepExporter | null>(null);
   // WebCodecsサポート状況（現在の設定に対する）
@@ -55,6 +66,10 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   const [fpsRecommendation, setFpsRecommendation] = useState<string>('');
   
   const projectFileManager = useRef<ProjectFileManager>(new ProjectFileManager(engine));
+
+  useEffect(() => subscribeProjectSaveStatus(snapshot => {
+    setLastSaved(snapshot ? new Date(snapshot.savedAt).toLocaleString('ja-JP') : '');
+  }), []);
 
   // アスペクト比の選択肢
   const aspectRatioOptions = [
@@ -287,6 +302,20 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
     }
   }, [showStatus]);
 
+  const handleSaveAs = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const savedPath = await projectFileManager.current.saveProject('project', true);
+      setLastSaved(new Date().toLocaleString('ja-JP'));
+      showStatus(`別名で保存しました: ${savedPath}`, 'success');
+    } catch (error) {
+      console.error('Save as error:', error);
+      showStatus('別名保存に失敗しました', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [showStatus]);
+
   // プロジェクト読み込み
   const handleOpen = useCallback(async () => {
     setIsLoading(true);
@@ -391,6 +420,89 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
       setBatchProgress(undefined);
       setMemoryUsage(undefined);
       exporterRef.current = null;
+    }
+  };
+
+  const handleSrtExport = async () => {
+    const content = createSrt(engine.getTimelineData().lyrics);
+    if (!content) {
+      setSrtStatusType('error');
+      setSrtStatus('出力できる歌詞データがありません');
+      return;
+    }
+
+    const audioPath = engine.getAudioFilePath();
+    const audioFileName = audioPath?.split(/[/\\]/).pop() || 'lyrics';
+    const defaultFileName = `${audioFileName.replace(/\.[^.]+$/, '') || 'lyrics'}.srt`;
+
+    if (typeof window.electronAPI?.exportSrt !== 'function') {
+      setSrtStatusType('error');
+      setSrtStatus('SRT出力機能がアプリに反映されていません。Electronアプリを完全に終了して再起動してください。');
+      return;
+    }
+
+    setIsExportingSrt(true);
+    setSrtStatus('');
+    try {
+      const filePath = await window.electronAPI.exportSrt(content, defaultFileName);
+      if (!filePath) {
+        setSrtStatusType('info');
+        setSrtStatus('SRT出力をキャンセルしました');
+        return;
+      }
+      setSrtStatusType('success');
+      setSrtStatus(`SRTを書き出しました: ${filePath}`);
+    } catch (error) {
+      console.error('SRT export failed:', error);
+      setSrtStatusType('error');
+      const message = error instanceof Error ? error.message : String(error);
+      setSrtStatus(`SRTの書き出しに失敗しました: ${message}`);
+    } finally {
+      setIsExportingSrt(false);
+    }
+  };
+
+  const handlePngExport = async () => {
+    if (typeof window.electronAPI?.exportPng !== 'function') {
+      setPngStatusType('error');
+      setPngStatus('PNG出力機能がアプリに反映されていません。Electronアプリを完全に終了して再起動してください。');
+      return;
+    }
+
+    setIsExportingPng(true);
+    setPngStatus('');
+    try {
+      // 現在時刻の全シーンと共通Post FXを最終キャンバスへ反映する。
+      const captureTime = engine.currentTime;
+      engine.setCurrentTime(captureTime);
+      engine.app.render();
+
+      const capturedCanvas = engine.app.renderer.extract.canvas() as HTMLCanvasElement;
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        capturedCanvas.toBlob(result => {
+          if (result) resolve(result);
+          else reject(new Error('PNG画像の生成に失敗しました'));
+        }, 'image/png');
+      });
+      const imageData = new Uint8Array(await blob.arrayBuffer());
+      const timeLabel = formatTime(captureTime).replace(/[:.]/g, '-');
+      const filePath = await window.electronAPI.exportPng(imageData, `utavista_${timeLabel}.png`);
+
+      if (!filePath) {
+        setPngStatusType('info');
+        setPngStatus('PNG出力をキャンセルしました');
+        return;
+      }
+
+      setPngStatusType('success');
+      setPngStatus(`PNGを書き出しました: ${filePath}`);
+    } catch (error) {
+      console.error('PNG export failed:', error);
+      setPngStatusType('error');
+      const message = error instanceof Error ? error.message : String(error);
+      setPngStatus(`PNGの書き出しに失敗しました: ${message}`);
+    } finally {
+      setIsExportingPng(false);
     }
   };
 
@@ -521,11 +633,7 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   // キーボードショートカット
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        handleSave();
-      }
-      else if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
         e.preventDefault();
         handleOpen();
       }
@@ -535,7 +643,7 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleSave, handleOpen]);
+  }, [handleOpen]);
 
   return (
     <div className="project-tab panel-content">
@@ -548,6 +656,13 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
             disabled={isLoading}
           >
             保存 (Ctrl+S)
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={handleSaveAs}
+            disabled={isLoading}
+          >
+            別名で保存 (Ctrl+Shift+S)
           </Button>
           <Button 
             variant="info"
@@ -766,6 +881,54 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
               type="error" 
               message={exportError}
               onClose={() => setExportError(null)}
+            />
+          )}
+        </div>
+      </Section>
+
+      <hr className="u-divider" />
+
+      <Section title="静止画（PNG）出力">
+        <div className="image-export-settings">
+          <p>タイムラインの現在位置を、背景・文字・共通Post FXを合成した1枚のPNGとして書き出します。</p>
+          <Button
+            variant="secondary"
+            size="large"
+            fullWidth
+            onClick={handlePngExport}
+            disabled={isExportingPng || isExporting}
+          >
+            {isExportingPng ? 'PNGを書き出し中…' : '現在のフレームをPNGで書き出す'}
+          </Button>
+          {pngStatus && (
+            <StatusMessage
+              type={pngStatusType}
+              message={pngStatus}
+              onClose={() => setPngStatus('')}
+            />
+          )}
+        </div>
+      </Section>
+
+      <hr className="u-divider" />
+
+      <Section title="字幕（SRT）出力">
+        <div className="subtitle-export-settings">
+          <p>歌詞のフレーズ開始・終了時刻を使い、SubRip字幕ファイルとして書き出します。</p>
+          <Button
+            variant="secondary"
+            size="large"
+            fullWidth
+            onClick={handleSrtExport}
+            disabled={isExportingSrt}
+          >
+            {isExportingSrt ? 'SRTを書き出し中…' : 'SRTを書き出す'}
+          </Button>
+          {srtStatus && (
+            <StatusMessage
+              type={srtStatusType}
+              message={srtStatus}
+              onClose={() => setSrtStatus('')}
             />
           )}
         </div>

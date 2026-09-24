@@ -10,9 +10,13 @@ import type {
 
 export interface ElectronAPI {
   // File management
-  saveProject(projectData: ProjectData): Promise<string>;
+  saveProject(projectData: ProjectData, options?: { saveAs?: boolean }): Promise<string>;
   loadProject(): Promise<ProjectData>;
-  selectMedia(type: 'video' | 'audio'): Promise<MediaFileInfo>;
+  consumePendingProject(): Promise<ProjectData | null>;
+  onProjectOpenRequested(callback: () => void): () => void;
+  selectMedia(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo>;
+  exportSrt(content: string, defaultFileName?: string): Promise<string | null>;
+  exportPng(imageData: Uint8Array, defaultFileName?: string): Promise<string | null>;
   
   // Video export (legacy)
   startExport(options: ExportOptions): Promise<void>;

@@ -12,14 +12,29 @@ import type {
 // Secure API exposure to renderer process
 const electronAPI = {
   // File management
-  saveProject: (projectData: ProjectData): Promise<string> => 
-    ipcRenderer.invoke('file:save-project', projectData),
+  saveProject: (projectData: ProjectData, options?: { saveAs?: boolean }): Promise<string> =>
+    ipcRenderer.invoke('file:save-project', projectData, options),
   
   loadProject: (): Promise<ProjectData> => 
     ipcRenderer.invoke('file:load-project'),
+
+  consumePendingProject: (): Promise<ProjectData | null> =>
+    ipcRenderer.invoke('file:consume-pending-project'),
+
+  onProjectOpenRequested: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('file:open-project-requested', listener);
+    return () => ipcRenderer.removeListener('file:open-project-requested', listener);
+  },
   
-  selectMedia: (type: 'video' | 'audio'): Promise<MediaFileInfo> => 
+  selectMedia: (type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo> =>
     ipcRenderer.invoke('file:select-media', type),
+
+  exportSrt: (content: string, defaultFileName?: string): Promise<string | null> =>
+    ipcRenderer.invoke('file:export-srt', content, defaultFileName),
+
+  exportPng: (imageData: Uint8Array, defaultFileName?: string): Promise<string | null> =>
+    ipcRenderer.invoke('file:export-png', imageData, defaultFileName),
   
   // Video export (legacy)
   startExport: (options: ExportOptions): Promise<void> => 

@@ -1,4 +1,4 @@
-/* TemplateTab.css */
+/* SceneSettingsTab.css */
 .template-tab {
   display: flex;
   flex-direction: column;
@@ -524,4 +524,33 @@
   background-color: rgba(100, 100, 100, 0.15);
   color: #d0d0d0;
   border: 1px solid rgba(100, 100, 100, 0.3);
+}
+
+.scene-settings-tab > p,
+.params-section > p,
+.post-effect-section > p {
+  color: #aeb4c0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.post-effect-section {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(116, 132, 166, 0.35);
+}
+
+.clear-params-button {
+  width: 100%;
+  margin: 0.5rem 0 1rem;
+  padding: 0.65rem 0.8rem;
+  color: #dfe7f5;
+  background: rgba(56, 72, 104, 0.6);
+  border: 1px solid rgba(124, 145, 188, 0.5);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.clear-params-button:hover {
+  background: rgba(70, 91, 132, 0.75);
 }

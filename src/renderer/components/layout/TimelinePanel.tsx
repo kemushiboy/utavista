@@ -1,12 +1,15 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import HierarchicalMarker from '../timeline/HierarchicalMarker';
 import WaveformPanel from './WaveformPanel';
+import BeatMarkers from '../timeline/BeatMarkers';
+import type { BeatMarker } from '../../services/AudioAnalyzer';
 import { PhraseUnit, WordUnit, CharUnit, IAnimationTemplate } from '../../types/types';
 import { MarkerLevel, SelectionState } from '../timeline/types/HierarchicalMarkerTypes';
 import { getMarkerLevel, getParentObjectId, MIN_DURATIONS, calculateBlockConstraints } from '../timeline/MarkerConstraints';
 import { getCurrentTimeMarkerStyle, getTimeIndicatorStyle, getDragSelectionStyle } from '../timeline/MarkerStyles';
 import Engine from '../../engine/Engine';
 import { ViewportManager } from '../../utils/ViewportManager';
+import { setObjectSelectionSnapshot } from '../../services/ObjectSelectionState';
 import '../../styles/components.css';
 
 // ズームレベルの定義（ピクセル密度: ms per pixel）
@@ -38,6 +41,19 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
   const [lyrics, setLyrics] = useState<PhraseUnit[]>([]);
   const [width, setWidth] = useState(800);
   const [localDuration, setLocalDuration] = useState(totalDuration || 10000);
+  const [beats, setBeats] = useState<BeatMarker[]>(() => engine?.getBeatMarkers() || []);
+
+  useEffect(() => {
+    setBeats(engine?.getBeatMarkers() || []);
+
+    const handleBeatMarkersUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ beats: BeatMarker[] }>).detail;
+      setBeats(detail?.beats || []);
+    };
+
+    window.addEventListener('beat-markers-updated', handleBeatMarkersUpdated);
+    return () => window.removeEventListener('beat-markers-updated', handleBeatMarkersUpdated);
+  }, [engine]);
   
   // 選択状態管理
   const [selectionState, setSelectionState] = useState<SelectionState>({
@@ -121,26 +137,8 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
     }
   }, [externalViewStart, msPerPixel]);
 
-  /**
-   * Undo状態保存
-   */
-  const saveUndoState = (operationType: string, objectId?: string) => {
-    if (!engine) return;
-    
-    try {
-      engine.projectStateManager.updateCurrentState({
-        lyricsData: JSON.parse(JSON.stringify(lyrics)),
-        currentTime: currentTime,
-        templateAssignments: engine.templateManager.exportAssignments(),
-        globalParams: engine.parameterManager.getGlobalDefaults(),
-        objectParams: engine.parameterManager.exportCompressed().phrases || {},
-        defaultTemplateId: engine.templateManager.getDefaultTemplateId()
-      });
-      
-      engine.projectStateManager.saveBeforeLyricsChange(operationType, objectId);
-    } catch (error) {
-      console.error('TimelinePanel: Undo状態保存エラー:', error);
-    }
+  const commitTimelineEdit = () => {
+    engine?.saveUndoState('タイムライン編集');
   };
 
   /**
@@ -190,6 +188,10 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
       selectedIds: newSelectedIds,
       selectedLevel: newSelectedLevel,
       lastSelectedId: newSelectedIds.length > 0 ? newSelectedIds[newSelectedIds.length - 1] : null
+    });
+    setObjectSelectionSnapshot({
+      objectIds: newSelectedIds,
+      objectType: newSelectedLevel || ''
     });
 
     // パラメータ取得（単一選択時のみ）
@@ -930,9 +932,7 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
   /**
    * ドラッグ開始ハンドラー（改良版）
    */
-  const handleDragStart = (unitId: string, operationType: string) => {
-    saveUndoState(operationType, unitId);
-    
+  const handleDragStart = (_unitId: string, _operationType: string) => {
     // 新しいドラッグ状態をリセット
     const dragState = multiDragStateRef.current;
     dragState.isActive = false;
@@ -1399,6 +1399,14 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
           }}
         >
           <div className="timeline-content" style={{ width: `${timelineWidth}px`, position: 'relative' }}>
+          <BeatMarkers
+            beats={beats}
+            duration={duration}
+            timelineWidth={timelineWidth}
+            msPerPixel={msPerPixel}
+            viewStart={externalViewStart ?? 0}
+            currentTime={currentTime}
+          />
           {/* 波形表示 */}
           <div className="waveform-wrapper">
             <WaveformPanel 
@@ -1463,6 +1471,7 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
                   onMultiUpdate={handleMultiUpdate}
                   onSelectionChange={handleSelectionChange}
                   onDragStart={handleDragStart}
+                  onDragEnd={commitTimelineEdit}
                 />
               );
             })}
@@ -1520,6 +1529,7 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
                     onMultiUpdate={handleMultiUpdate}
                     onSelectionChange={handleSelectionChange}
                     onDragStart={handleDragStart}
+                    onDragEnd={commitTimelineEdit}
                   />
                 );
               })
@@ -1580,6 +1590,7 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
                       onMultiUpdate={handleMultiUpdate}
                       onSelectionChange={handleSelectionChange}
                       onDragStart={handleDragStart}
+                      onDragEnd={commitTimelineEdit}
                     />
                   );
                 })

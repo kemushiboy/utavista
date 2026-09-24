@@ -11,6 +11,7 @@ import { BrowserWindow } from 'electron';
 import * as path from 'path';
 import * as fsSync from 'fs';
 import * as os from 'os';
+import type { LockstepPlugin } from './plugins/LockstepPlugin';
 
 export interface VideoExportRequest {
   sessionId: string;
@@ -65,7 +66,7 @@ export class BatchVideoProcessor {
   private wcMeta: Map<string, { fps: number; width: number; height: number; fileName: string; audioPath?: string; outputPath?: string; h264Path: string; totalFrames?: number; totalDurationMs?: number } > = new Map();
   private _muxStartTimes?: Map<string, number>;
   // Lockstep plugin (native or system fallback)
-  private lockstepPlugin = require('./plugins/PluginRegistry').getLockstepPlugin();
+  private lockstepPlugin: LockstepPlugin = require('./plugins/PluginRegistry').getLockstepPlugin();
   
   constructor() {
     this.ffmpegWrapper = new SystemFFmpegWrapper();
