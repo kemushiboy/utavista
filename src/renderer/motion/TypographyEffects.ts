@@ -32,12 +32,24 @@ export interface TypographyEffectParams {
   surfaceShape: SurfaceShape;
   surfaceCurve: number;
   surfaceRepeat: number;
+  variableWeightEnabled: boolean;
+  variableWeightDuration: number;
+  variableWeightSpacing: number;
+  kerningMotionEnabled: boolean;
+  kerningMotionAmount: number;
+  kerningMotionDuration: number;
+  baselineWaveEnabled: boolean;
+  baselineWaveOffset: number;
+  baselineWaveOvershoot: number;
+  baselineWaveDuration: number;
+  baselineWaveStagger: number;
 }
 
 export interface TypographyEffectContext {
   nowMs: number;
   startMs: number;
   phraseStartMs?: number;
+  effectStartMs?: number;
   seed: number;
   index: number;
   intensity: number;
@@ -91,6 +103,16 @@ function clamp01(value: number): number {
 function smoothstep(value: number): number {
   const clamped = clamp01(value);
   return clamped * clamped * (3 - 2 * clamped);
+}
+
+/** 参照モーションの細→太→細→中太という1周期を、絶対時刻から評価する。 */
+export function sampleVariableWeightPulse(timeMs: number, durationMs: number): number {
+  const cycle = Math.max(1, durationMs);
+  const progress = ((Math.max(0, timeMs) % cycle) / cycle + 1) % 1;
+  if (progress < 0.3) return progress / 0.3;
+  if (progress < 0.6) return 1 - (progress - 0.3) / 0.3;
+  if (progress < 0.82) return ((progress - 0.6) / 0.22) * 0.65;
+  return 0.65;
 }
 
 function destroyDisplayObject(displayObject: PIXI.DisplayObject): void {
@@ -201,11 +223,62 @@ export class TypographyEffects {
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
+    this.updateCharacterMotion(visualSource, params, context);
     this.updateWarpFilter(visualSource, params, context);
     this.updateRepetition(container, visualSource, params, context);
     this.updateDestruction(container, source, visualSource, params, context);
     this.updateEmitters(container, source, params, context);
     this.updateSurfaceCopies(container, source, params, context);
+  }
+
+  /**
+   * 文字単位の変形を共通の基準座標へ加算する。
+   * updateCharacterText が毎フレーム基準座標へ戻すため、シーク順序やfpsに依存しない。
+   */
+  private updateCharacterMotion(
+    source: PIXI.Container,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext
+  ): void {
+    const characters = source.children.filter((child): child is PIXI.Text => child instanceof PIXI.Text);
+    const effectStartMs = context.effectStartMs ?? context.startMs;
+    const elapsedMs = context.nowMs - effectStartMs;
+    const centerIndex = (characters.length - 1) / 2;
+
+    let weightSpacing = 0;
+    if (params.variableWeightEnabled) {
+      const pulse = sampleVariableWeightPulse(elapsedMs, params.variableWeightDuration);
+      weightSpacing = params.variableWeightSpacing * (1 - pulse * 1.25) * context.intensity;
+    }
+
+    characters.forEach((character, characterIndex) => {
+      if (params.variableWeightEnabled) {
+        character.x += (characterIndex - centerIndex) * weightSpacing;
+      }
+
+      if (params.kerningMotionEnabled) {
+        const progress = smoothstep(elapsedMs / Math.max(1, params.kerningMotionDuration));
+        character.x += (characterIndex - centerIndex)
+          * params.kerningMotionAmount
+          * (1 - progress)
+          * context.intensity;
+      }
+
+      if (params.baselineWaveEnabled) {
+        const localElapsed = elapsedMs - characterIndex * params.baselineWaveStagger;
+        const progress = clamp01(localElapsed / Math.max(1, params.baselineWaveDuration));
+        let y = params.baselineWaveOffset;
+        if (progress >= 0.62) {
+          const settle = smoothstep((progress - 0.62) / 0.38);
+          y = -params.baselineWaveOvershoot * (1 - settle);
+        } else if (progress > 0) {
+          const rise = smoothstep(progress / 0.62);
+          y = params.baselineWaveOffset
+            + (-params.baselineWaveOvershoot - params.baselineWaveOffset) * rise;
+        }
+        character.y += y * context.intensity;
+      }
+    });
   }
 
   cleanup(container: PIXI.Container): void {

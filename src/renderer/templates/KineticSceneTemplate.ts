@@ -27,6 +27,7 @@ import {
   createSustain,
   sampleClip,
   sceneCatalog,
+  sampleVariableWeightPulse,
   TypographyEffects,
   TypographyEffectParams
 } from '../motion';
@@ -55,8 +56,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
 
   readonly metadata: TemplateMetadata = {
     name: 'KineticSceneTemplate',
-    version: '1.1.0',
-    description: 'レイアウト・基本モーション・6系統のタイポグラフィエフェクトを自由に合成するシーンテンプレート',
+    version: '1.2.0',
+    description: 'レイアウト・基本モーション・9系統のタイポグラフィエフェクトを自由に合成するシーンテンプレート',
     license: 'GPL-3.0',
     originalAuthor: {
       name: 'UTAVISTA Development Team',
@@ -117,7 +118,20 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'surfaceEnabled', type: 'boolean', default: false, label: '文字曲面' },
       { name: 'surfaceShape', type: 'string', default: 'ribbon', options: ['ribbon', 'cylinder', 'torus'], label: '曲面形状' },
       { name: 'surfaceCurve', type: 'number', default: 0.14, min: -0.5, max: 0.5, step: 0.01, label: '曲率' },
-      { name: 'surfaceRepeat', type: 'number', default: 2, min: 1, max: 6, step: 1, label: 'UV反復数' }
+      { name: 'surfaceRepeat', type: 'number', default: 2, min: 1, max: 6, step: 1, label: 'UV反復数' },
+      { name: 'variableWeightEnabled', type: 'boolean', default: false, label: '可変ウェイトパルス' },
+      { name: 'variableWeightMin', type: 'number', default: 200, min: 100, max: 900, step: 10, label: '最小ウェイト' },
+      { name: 'variableWeightMax', type: 'number', default: 900, min: 100, max: 900, step: 10, label: '最大ウェイト' },
+      { name: 'variableWeightDuration', type: 'number', default: 4200, min: 300, max: 10000, step: 50, label: 'ウェイト周期 (ms)' },
+      { name: 'variableWeightSpacing', type: 'number', default: 4, min: 0, max: 30, step: 0.5, label: 'ウェイト字間補正' },
+      { name: 'kerningMotionEnabled', type: 'boolean', default: false, label: 'キネティックカーニング' },
+      { name: 'kerningMotionAmount', type: 'number', default: 14, min: -40, max: 80, step: 1, label: 'カーニング展開幅' },
+      { name: 'kerningMotionDuration', type: 'number', default: 620, min: 50, max: 4000, step: 10, label: 'カーニング収束時間 (ms)' },
+      { name: 'baselineWaveEnabled', type: 'boolean', default: false, label: 'ベースラインウェーブ出現' },
+      { name: 'baselineWaveOffset', type: 'number', default: 44, min: -150, max: 150, step: 1, label: '基線開始オフセット' },
+      { name: 'baselineWaveOvershoot', type: 'number', default: 7, min: 0, max: 50, step: 1, label: '基線オーバーシュート' },
+      { name: 'baselineWaveDuration', type: 'number', default: 840, min: 100, max: 4000, step: 10, label: '基線移動時間 (ms)' },
+      { name: 'baselineWaveStagger', type: 'number', default: 55, min: 0, max: 300, step: 5, label: '文字遅延 (ms)' }
     ];
   }
 
@@ -255,12 +269,14 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       : nowMs <= endMs
         ? stringParam(params, 'activeTextColor', '#FFFFFF')
         : stringParam(params, 'completedTextColor', '#A8FF60');
-    const textObject = this.ensureText(container, text, params, fontSize, color);
     const typographyParams = this.resolveTypographyEffects(params);
+    const animatedFontWeight = this.resolveAnimatedFontWeight(params, nowMs, entranceStartMs);
+    const textObject = this.ensureText(container, text, params, fontSize, color, animatedFontWeight);
     const typographyContext = {
       nowMs,
       startMs,
       phraseStartMs: numberParam(params, 'phraseStartMs', startMs),
+      effectStartMs: entranceStartMs,
       seed,
       index,
       intensity
@@ -274,7 +290,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       fontSize,
       nowMs,
       startMs,
-      endMs
+      endMs,
+      animatedFontWeight
     );
     const characterGroup = container.children.find(child => child.name === CHAR_GROUP_NAME) as PIXI.Container;
     this.typographyEffects.update(
@@ -299,7 +316,9 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   ): { x: number; y: number; rotation: number; scale: number } {
     const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
-    const fontWeight = stringParam(params, 'fontWeight', '700');
+    const fontWeight = params.variableWeightEnabled === true
+      ? String(numberParam(params, 'variableWeightMax', 900))
+      : stringParam(params, 'fontWeight', '700');
     const widths = words.map(word => Math.max(
       fontSize * 0.5,
       Array.from(word.word || ' ').reduce(
@@ -339,7 +358,9 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   ): { x: number; y: number; rotation: number; scale: number } {
     const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
-    const fontWeight = stringParam(params, 'fontWeight', '700');
+    const fontWeight = params.variableWeightEnabled === true
+      ? String(numberParam(params, 'variableWeightMax', 900))
+      : stringParam(params, 'fontWeight', '700');
     const wordWidths = Array.from({ length: total }, (_, wordIndex) => {
       const text = words[wordIndex]?.word || '　';
       return Math.max(
@@ -390,7 +411,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     fontSize: number,
     nowMs: number,
     wordStartMs: number,
-    wordEndMs: number
+    wordEndMs: number,
+    fontWeightOverride?: string
   ): void {
     let group = container.children.find(child => child.name === CHAR_GROUP_NAME) as PIXI.Container | undefined;
     if (!group) {
@@ -403,7 +425,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const displayCharacters = Array.from(displayText);
     const characterTimings = Array.isArray(params.chars) ? params.chars as CharUnit[] : [];
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
-    const fontWeight = stringParam(params, 'fontWeight', '700');
+    const fontWeight = fontWeightOverride ?? stringParam(params, 'fontWeight', '700');
     const waitingColor = stringParam(params, 'textColor', '#F3F0E8');
     const activeColor = stringParam(params, 'activeTextColor', '#FFFFFF');
     const completedColor = stringParam(params, 'completedTextColor', '#A8FF60');
@@ -460,7 +482,13 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       const characterText = group!.children.find(
         child => child.name === `${CHAR_NAME_PREFIX}${characterIndex}`
       ) as PIXI.Text | undefined;
-      if (characterText) characterText.position.set(cursorX + characterWidth / 2, 0);
+      if (characterText) {
+        characterText.position.set(cursorX + characterWidth / 2, 0);
+        characterText.scale.set(1);
+        characterText.skew.set(0);
+        characterText.rotation = 0;
+        characterText.alpha = 1;
+      }
       cursorX += characterWidth;
     });
   }
@@ -499,11 +527,12 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     text: string,
     params: Record<string, unknown>,
     fontSize: number,
-    color: string
+    color: string,
+    fontWeightOverride?: string
   ): PIXI.Text {
     let textObject = container.children.find(child => child.name === TEXT_NAME) as PIXI.Text | undefined;
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
-    const fontWeight = stringParam(params, 'fontWeight', '700');
+    const fontWeight = fontWeightOverride ?? stringParam(params, 'fontWeight', '700');
     const signature = `${text}|${fontFamily}|${fontSize}|${fontWeight}|${color}`;
 
     if (!textObject) {
@@ -600,6 +629,24 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     };
   }
 
+  private resolveAnimatedFontWeight(
+    params: Record<string, unknown>,
+    nowMs: number,
+    effectStartMs: number
+  ): string {
+    const baseWeight = stringParam(params, 'fontWeight', '700');
+    if (params.variableWeightEnabled !== true) return baseWeight;
+
+    const minimum = Math.max(1, numberParam(params, 'variableWeightMin', 200));
+    const maximum = Math.max(minimum, numberParam(params, 'variableWeightMax', 900));
+    const pulse = sampleVariableWeightPulse(
+      nowMs - effectStartMs,
+      numberParam(params, 'variableWeightDuration', 4200)
+    );
+    // 小刻みな値のままだと毎フレームTextStyleを生成するため、視覚差が出にくい10刻みに丸める。
+    return String(Math.round((minimum + (maximum - minimum) * pulse) / 10) * 10);
+  }
+
   private resolveTypographyEffects(params: Record<string, unknown>): TypographyEffectParams {
     return {
       shuffleEnabled: params.shuffleEnabled === true,
@@ -625,7 +672,18 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       surfaceEnabled: params.surfaceEnabled === true,
       surfaceShape: stringParam(params, 'surfaceShape', 'ribbon') as TypographyEffectParams['surfaceShape'],
       surfaceCurve: numberParam(params, 'surfaceCurve', 0.14),
-      surfaceRepeat: numberParam(params, 'surfaceRepeat', 2)
+      surfaceRepeat: numberParam(params, 'surfaceRepeat', 2),
+      variableWeightEnabled: params.variableWeightEnabled === true,
+      variableWeightDuration: numberParam(params, 'variableWeightDuration', 4200),
+      variableWeightSpacing: numberParam(params, 'variableWeightSpacing', 4),
+      kerningMotionEnabled: params.kerningMotionEnabled === true,
+      kerningMotionAmount: numberParam(params, 'kerningMotionAmount', 14),
+      kerningMotionDuration: numberParam(params, 'kerningMotionDuration', 620),
+      baselineWaveEnabled: params.baselineWaveEnabled === true,
+      baselineWaveOffset: numberParam(params, 'baselineWaveOffset', 44),
+      baselineWaveOvershoot: numberParam(params, 'baselineWaveOvershoot', 7),
+      baselineWaveDuration: numberParam(params, 'baselineWaveDuration', 840),
+      baselineWaveStagger: numberParam(params, 'baselineWaveStagger', 55)
     };
   }
 }
