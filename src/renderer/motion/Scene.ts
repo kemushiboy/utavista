@@ -113,16 +113,9 @@ export function createEntrance(
     case 'fall':
       return tween(duration, { y: -360, rotation: -0.35, alpha: 0 }, { y: 0, rotation: 0, alpha: 1 }, resolvedEasing);
     case 'noise':
-      return motion(duration, (timeMs, context) => {
-        const progress = Math.min(1, timeMs / Math.max(1, duration));
-        const eased = applyEasing(resolvedEasing, progress);
-        const frame = Math.floor(timeMs / 35);
-        return {
-          x: deterministicNoise(context.seed + frame * 173) * 24 * context.intensity * (1 - eased),
-          skewX: deterministicNoise(context.seed + frame * 181) * 0.28 * (1 - eased),
-          alpha: Math.min(1, applyEasing('easeOutQuad', progress))
-        };
-      });
+      return motion(duration, (timeMs, context) => ({
+        alpha: sampleNoiseFade(timeMs, duration, resolvedEasing, context, 'in')
+      }));
     case 'characterBreak':
       return motion(duration, (timeMs, context) => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
@@ -180,6 +173,29 @@ export function createSustain(name: SustainName): MotionClip {
   }
 }
 
+/**
+ * 位置を動かさず、透明度だけをフレーム単位でランダムに点滅させながらフェードする。
+ * 進行度が上がるほど表示（in）／非表示（out）のフレームが増え、最後は完全表示／非表示で終わる。
+ */
+function sampleNoiseFade(
+  timeMs: number,
+  duration: number,
+  easing: EasingName,
+  context: MotionContext,
+  direction: 'in' | 'out'
+): number {
+  const progress = Math.min(1, Math.max(0, timeMs / Math.max(1, duration)));
+  if (progress >= 1) return direction === 'in' ? 1 : 0;
+  const eased = applyEasing(easing, progress);
+  const visibility = direction === 'in' ? eased : 1 - eased;
+  const frame = Math.floor(timeMs / 35);
+  const threshold = (deterministicNoise(context.seed + frame * 173 + context.index * 29) + 1) / 2;
+  const level = (deterministicNoise(context.seed + frame * 181 + context.index * 37) + 1) / 2;
+  return threshold < visibility
+    ? 0.55 + level * 0.45
+    : level * 0.12 * visibility;
+}
+
 export function createExit(
   name: ExitName,
   duration: number,
@@ -214,16 +230,9 @@ export function createExit(
         };
       });
     case 'noise':
-      return motion(duration, (timeMs, context) => {
-        const progress = Math.min(1, timeMs / Math.max(1, duration));
-        const eased = applyEasing(resolvedEasing, progress);
-        const frame = Math.floor(timeMs / 35);
-        return {
-          x: deterministicNoise(context.seed + frame * 173) * 24 * context.intensity * eased,
-          skewX: deterministicNoise(context.seed + frame * 181) * 0.28 * eased,
-          alpha: Math.max(0, 1 - applyEasing('easeInQuad', progress))
-        };
-      });
+      return motion(duration, (timeMs, context) => ({
+        alpha: sampleNoiseFade(timeMs, duration, resolvedEasing, context, 'out')
+      }));
     case 'hardStop':
     default:
       return tween(Math.min(45, duration), { alpha: 1 }, { alpha: 0 }, 'linear');
