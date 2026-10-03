@@ -12,9 +12,9 @@ import {
 } from './Motion';
 
 export type LayoutName = 'center' | 'random' | 'circle' | 'vertical' | 'fill';
-export type EntranceName = 'slam' | 'slide' | 'scale' | 'characterBreak' | 'instant';
+export type EntranceName = 'slam' | 'slide' | 'scale' | 'collapse' | 'fall' | 'characterBreak' | 'noise' | 'instant';
 export type SustainName = 'still' | 'shake' | 'pulse' | 'glitch' | 'multiply' | 'compress';
-export type ExitName = 'collapse' | 'fall' | 'shatter' | 'noise' | 'hardStop';
+export type ExitName = 'slam' | 'slide' | 'scale' | 'collapse' | 'fall' | 'shatter' | 'noise' | 'hardStop';
 export type ScreenMotionName = 'none' | 'cameraShake' | 'zoom' | 'rgbDrift' | 'afterimage';
 export type EasingSelection = EasingName | 'auto';
 
@@ -42,9 +42,9 @@ export interface LayoutResult {
 
 export const sceneCatalog = {
   layouts: ['center', 'random', 'circle', 'vertical', 'fill'] as LayoutName[],
-  entrances: ['slam', 'slide', 'scale', 'characterBreak', 'instant'] as EntranceName[],
+  entrances: ['slam', 'slide', 'scale', 'collapse', 'fall', 'characterBreak', 'noise', 'instant'] as EntranceName[],
   sustains: ['still', 'shake', 'pulse', 'glitch', 'multiply', 'compress'] as SustainName[],
-  exits: ['collapse', 'fall', 'shatter', 'noise', 'hardStop'] as ExitName[],
+  exits: ['slam', 'slide', 'scale', 'collapse', 'fall', 'shatter', 'noise', 'hardStop'] as ExitName[],
   screens: ['none', 'cameraShake', 'zoom', 'rgbDrift', 'afterimage'] as ScreenMotionName[],
   easings: [
     'auto', 'linear', 'easeInQuad', 'easeOutQuad', 'easeInCubic', 'easeOutCubic',
@@ -108,6 +108,21 @@ export function createEntrance(
       return tween(duration, { x: -280, alpha: 0, skewX: -0.18 }, { x: 0, alpha: 1, skewX: 0 }, resolvedEasing);
     case 'scale':
       return tween(duration, { scaleX: 0.08, scaleY: 0.08, alpha: 0 }, { scaleX: 1, scaleY: 1, alpha: 1 }, resolvedEasing);
+    case 'collapse':
+      return tween(duration, { scaleY: 0.02, scaleX: 1.3, alpha: 0 }, { scaleY: 1, scaleX: 1, alpha: 1 }, resolvedEasing);
+    case 'fall':
+      return tween(duration, { y: -360, rotation: -0.35, alpha: 0 }, { y: 0, rotation: 0, alpha: 1 }, resolvedEasing);
+    case 'noise':
+      return motion(duration, (timeMs, context) => {
+        const progress = Math.min(1, timeMs / Math.max(1, duration));
+        const eased = applyEasing(resolvedEasing, progress);
+        const frame = Math.floor(timeMs / 35);
+        return {
+          x: deterministicNoise(context.seed + frame * 173) * 24 * context.intensity * (1 - eased),
+          skewX: deterministicNoise(context.seed + frame * 181) * 0.28 * (1 - eased),
+          alpha: Math.min(1, applyEasing('easeOutQuad', progress))
+        };
+      });
     case 'characterBreak':
       return motion(duration, (timeMs, context) => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
@@ -174,6 +189,15 @@ export function createExit(
     ? (name === 'fall' ? 'easeInQuad' : 'easeInCubic')
     : easing;
   switch (name) {
+    case 'slam':
+      return parallel(
+        tween(duration, {}, { scaleX: 3.2, scaleY: 3.2 }, resolvedEasing),
+        tween(duration, { alpha: 1 }, { alpha: 0 }, 'easeInCubic')
+      );
+    case 'slide':
+      return tween(duration, {}, { x: 280, alpha: 0, skewX: 0.18 }, resolvedEasing);
+    case 'scale':
+      return tween(duration, {}, { scaleX: 0.08, scaleY: 0.08, alpha: 0 }, resolvedEasing);
     case 'collapse':
       return tween(duration, {}, { scaleY: 0.02, scaleX: 1.3, alpha: 0 }, resolvedEasing);
     case 'fall':

@@ -38,9 +38,9 @@ const breathing = repeat(
 `KineticSceneTemplate` は単語の `start` / `end` を描画タイミングとして使い、次の部品をパラメータから選んで場面を組み立てます。文字単位の調整は不要です。
 
 - Layout: `center`, `random`, `circle`, `vertical`, `fill`
-- Entrance: `slam`, `slide`, `scale`, `characterBreak`, `instant`
+- Entrance: `slam`, `slide`, `scale`, `collapse`, `fall`, `characterBreak`, `noise`, `instant`
 - Sustain: `still`, `shake`, `pulse`, `glitch`, `multiply`, `compress`
-- Exit: `collapse`, `fall`, `shatter`, `noise`, `hardStop`
+- Exit: `slam`, `slide`, `scale`, `collapse`, `fall`, `shatter`, `noise`, `hardStop`
 - Screen: `none`, `cameraShake`, `zoom`, `rgbDrift`, `afterimage`
 
 新しい動きは `Scene.ts` の各ファクトリーへ `MotionClip` を追加し、カタログに名前を登録します。テンプレートクラスを新設する必要はありません。
