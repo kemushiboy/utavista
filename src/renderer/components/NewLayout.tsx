@@ -287,8 +287,12 @@ const NewLayout: React.FC<NewLayoutProps> = ({
             />
           </div>
           <div className="sidepanel-area">
-            {/* タブ切り替え実装：5タブ構成 */}
-            <SidebarTabs labels={['シーン', 'コンテンツ', 'プロジェクト', '設定', 'デバッグ']}>
+            {/* タブ切り替え実装：5タブ構成。
+                プロジェクトタブは動画書き出しの進行状態と出力設定を持つため、タブ切替でアンマウントしない。 */}
+            <SidebarTabs
+              labels={['シーン', 'コンテンツ', 'プロジェクト', '設定', 'デバッグ']}
+              keepMountedIndexes={[2]}
+            >
               {[
                 <SceneSettingsTab key="scene-settings-tab" engine={engine} />,
                 <ContentTab 
