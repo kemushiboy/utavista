@@ -8,6 +8,7 @@ import * as fsSync from 'fs';
 import type { ExportOptions, ExportProgress, ExportError } from '../shared/types';
 import { BatchVideoProcessor } from './BatchVideoProcessor';
 import { resolveFFmpegBinary } from './ffmpegPath';
+import { AAC_AUDIO_ARGS } from './audioEncoding';
 
 export class ExportManager {
   private ffmpegPath: string;
@@ -201,7 +202,7 @@ export class ExportManager {
       if (options.audioPath) {
         ffmpegArgs.splice(-2, 0, 
           '-i', options.audioPath,
-          '-c:a', 'aac',
+          ...AAC_AUDIO_ARGS,
           '-shortest' // Match shortest stream duration
         );
       }

@@ -11,6 +11,7 @@ import * as os from 'os';
 import { promises as fs } from 'fs';
 import * as fsSync from 'fs';
 import { resolveFFmpegBinary } from './ffmpegPath';
+import { AAC_AUDIO_ARGS } from './audioEncoding';
 
 export interface BatchVideoOptions {
   sessionId: string;
@@ -154,7 +155,7 @@ export class SystemFFmpegWrapper {
       '-i', options.h264Path
     ];
 
-    const audioArgs = options.audioPath ? ['-i', options.audioPath, '-c:a', 'aac'] : [];
+    const audioArgs = options.audioPath ? ['-i', options.audioPath, ...AAC_AUDIO_ARGS] : [];
 
     // Re-encode with libx264 to embed explicit CFR/fps metadata (most compatible)
     const args = [
@@ -556,8 +557,7 @@ OutputDir: ${outputDir}
           '-c:v', 'libx264',
           '-preset', 'medium',
           '-crf', '23',
-          '-c:a', 'aac',
-          '-b:a', '128k',
+          ...AAC_AUDIO_ARGS,
           '-shortest'
         );
       } else {
@@ -578,8 +578,7 @@ OutputDir: ${outputDir}
       if (includeMusicTrack && audioPath) {
         ffmpegArgs.push(
           '-c:v', 'copy', // 動画ストリームはコピー（高速）
-          '-c:a', 'aac',
-          '-b:a', '128k',
+          ...AAC_AUDIO_ARGS,
           '-shortest' // 短い方のストリームに合わせる
         );
       } else {
