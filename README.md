@@ -2,7 +2,7 @@
 
 ![UTAVISTA Screenshot](./docs/images/utavista_16-9.jpg)
 
-UTAVISTA（うたびすた）v0.7.0は、歌詞アニメーション動画を作成するためのElectronベースのデスクトップアプリケーションです。カラオケスタイルのテキストアニメーションをテンプレートベースで簡単に作成し、高品質な動画として出力できます。
+UTAVISTA（うたびすた）v0.7.2は、歌詞アニメーション動画を作成するためのElectronベースのデスクトップアプリケーションです。カラオケスタイルのテキストアニメーションをテンプレートベースで簡単に作成し、高品質な動画として出力できます。
 
 ## アプリケーション名について
 
@@ -32,8 +32,9 @@ UTAVISTA（うたびすた）v0.7.0は、歌詞アニメーション動画を作
 - 階層的なタイムライン編集（フレーズ、単語、文字単位）
 - **歌詞編集機能**（テキスト・タイミング・フレーズ管理、単語マージ機能）
 - テンプレートベースのアニメーションシステム
+- **キネティック・シーンコンポーザー**（出現・継続・消失・画面モーションと11系統のタイポグラフィエフェクトを自由に合成、内蔵プリセット26種）
 - リアルタイムプレビュー（PIXI.js WebGL レンダリング）
-- 高品質な動画エクスポート（WebCodecs使用）
+- 高品質な動画エクスポート（WebCodecs使用、縦長1080×1920などハードウェア非対応の設定はソフトウェアエンコードで出力）
 - **背景動画機能**（自動ループレンダリング対応）
 - **柔軟な出力範囲設定**（全区間・指定時間範囲の選択出力）
 - カスタマイズ可能なテンプレートパラメータ
@@ -42,7 +43,26 @@ UTAVISTA（うたびすた）v0.7.0は、歌詞アニメーション動画を作
 
 ## 更新履歴
 
-### v0.7.0 (現在のバージョン - プレベータ版)
+### v0.7.2 (現在のバージョン - プレベータ版)
+
+#### 新機能
+- **キネティック・シーンに参考モーションを追加**（[動きの引き出し](https://kumagi.com/motions/) の解説をもとに独自実装）
+  - 出現・消失: `soft`（ぼかしから澄む）、`anticipate`（予備動作）、`spring`（減衰ばね）、`bounce`（スカッシュ＆ストレッチ）、`turnstile`（回転ドア）、`mask`（マスク開口）、`genie`（吸い込み）
+  - 継続: `breathe`（吸う・止める・吐くの呼吸リズム）
+  - 画面全体: `whipPan`（横流しの場面転換）、`zoomDive`（潜り込むズーム）
+  - エフェクト: カラオケ塗り（発声中の文字を左→右に塗る）、二重輪郭インパクト、放出スタイル `speedLines`（集中線）
+  - 内蔵プリセット 10A〜14B（Drop Word、Soft Enter、Karaoke Fill、Spring / Genie、Squash & Stretch、Turnstile、Impact、Whip Pan）
+
+#### 改善
+- 出現と消失で同じモーション一覧から選べるように統一
+- 重複していたモーション名を整理（旧名は読み込み時に自動変換）
+  - `characterBreak` → `shatter`、`hardStop` → `instant`、`multiply` → `breathe`
+  - `multiply` に付随していた残像は、画面全体モーション `afterimage` で付けられます
+
+#### バグ修正
+- 縦長1080×1920@60など、ハードウェアエンコーダーが対応しない設定で動画を書き出せなかった問題を修正（ソフトウェアエンコードへ自動フォールバック）
+
+### v0.7.0
 
 #### 主なアップデート（v0.6.0 → v0.7.0）
 - ロックステップ動画レンダリング（WebCodecs + FFmpeg Mux）を実装
@@ -275,6 +295,18 @@ npm run package:all  # 全プラットフォーム用（Windows、macOS、Linux�
      - チェック時は開始時間・終了時間を「MM:SS.mmm」形式で指定可能
      - 部分的なプレビューや特定シーンの抽出に便利
    - 「エクスポート開始」で動画ファイルを生成・保存
+   - H.264はハードウェアエンコードを優先し、対応しない解像度・フレームレートではソフトウェアエンコードに切り替えます（その場合は書き出しに時間がかかります）
+
+### キネティック・シーンのモーションとプリセット
+
+`KineticSceneTemplate` では、単語ごとに次の部品を選んで場面を組み立てます。テンプレートタブのプリセット欄から内蔵プリセット（01A〜14B）を適用し、調整した設定をユーザープリセットとして保存できます。
+
+- **出現／消失**（共通）: `slam` `slide` `scale` `collapse` `fall` `shatter` `noise` `instant` `soft` `anticipate` `spring` `bounce` `turnstile` `mask` `genie`
+- **継続**: `still` `shake` `pulse` `breathe` `glitch` `compress`
+- **画面全体**: `none` `cameraShake` `zoom` `rgbDrift` `afterimage` `whipPan` `zoomDive`
+- **タイポグラフィエフェクト**（個別にON/OFF・同時合成可）: 文字シャッフル、反復複製、有機ディストーション、弾性破壊、文字オブジェクト放出、文字曲面、可変ウェイトパルス、キネティックカーニング、ベースラインウェーブ、カラオケ塗り、二重輪郭インパクト
+
+各モーションの詳細は `/docs/motion-composition.md`、参考にした公開事例は `/docs/motion-reference-implementations.md` を参照してください。
 
 ### プロジェクトファイルの管理
 
@@ -319,6 +351,9 @@ npm run build            # プロダクションビルド
 npm run build:renderer   # Rendererプロセスビルド
 npm run build:main       # Mainプロセスビルド
 npm run lint             # ESLintの実行
+npm run validate-motion  # モーション合成・プリセット・旧名移行の検証
+npm run validate-parameters # パラメータ定義の検証
+npm run template:validate   # テンプレート整合性の検証
 npm run electron         # Electronアプリ起動
 npm run package          # アプリパッケージ化
 npm run package:all      # 全プラットフォーム向けパッケージ化
