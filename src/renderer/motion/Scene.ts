@@ -192,31 +192,55 @@ export function createEntrance(
           alpha: Math.min(1, progress * 5)
         };
       });
-    case 'slam':
+    case 'slam': {
+      const startScale = tuningNumber(tuning, 'SlamScale', 3.2);
       return parallel(
-        tween(duration, { scaleX: 3.2, scaleY: 3.2 }, { scaleX: 1, scaleY: 1 }, resolvedEasing),
+        tween(duration, { scaleX: startScale, scaleY: startScale }, { scaleX: 1, scaleY: 1 }, resolvedEasing),
         tween(duration * 0.5, { alpha: 0 }, { alpha: 1 }, 'easeOutCubic')
       );
-    case 'slide':
-      return tween(duration, { x: -280, alpha: 0, skewX: -0.18 }, { x: 0, alpha: 1, skewX: 0 }, resolvedEasing);
-    case 'scale':
-      return tween(duration, { scaleX: 0.08, scaleY: 0.08, alpha: 0 }, { scaleX: 1, scaleY: 1, alpha: 1 }, resolvedEasing);
+    }
+    case 'slide': {
+      const travel = travelVector(tuningString(tuning, 'SlideDirection', 'right'));
+      const distance = tuningNumber(tuning, 'SlideDistance', 280);
+      const skew = tuningNumber(tuning, 'SlideSkew', 0.18);
+      return tween(
+        duration,
+        { x: -travel.x * distance, y: -travel.y * distance, alpha: 0, skewX: -skew * travel.x },
+        { x: 0, y: 0, alpha: 1, skewX: 0 },
+        resolvedEasing
+      );
+    }
+    case 'scale': {
+      const minimum = tuningNumber(tuning, 'ScaleMin', 0.08);
+      return tween(duration, { scaleX: minimum, scaleY: minimum, alpha: 0 }, { scaleX: 1, scaleY: 1, alpha: 1 }, resolvedEasing);
+    }
     case 'collapse':
-      return tween(duration, { scaleY: 0.02, scaleX: 1.3, alpha: 0 }, { scaleY: 1, scaleX: 1, alpha: 1 }, resolvedEasing);
+      return tween(
+        duration,
+        { scaleY: tuningNumber(tuning, 'CollapseSquash', 0.02), scaleX: tuningNumber(tuning, 'CollapseStretch', 1.3), alpha: 0 },
+        { scaleY: 1, scaleX: 1, alpha: 1 },
+        resolvedEasing
+      );
     case 'fall':
-      return tween(duration, { y: -360, rotation: -0.35, alpha: 0 }, { y: 0, rotation: 0, alpha: 1 }, resolvedEasing);
+      return tween(
+        duration,
+        { y: -tuningNumber(tuning, 'FallHeight', 360), rotation: -tuningNumber(tuning, 'FallRotation', 0.35), alpha: 0 },
+        { y: 0, rotation: 0, alpha: 1 },
+        resolvedEasing
+      );
     case 'noise':
       return motion(duration, (timeMs, context) => ({
-        alpha: sampleNoiseFade(timeMs, duration, resolvedEasing, context, 'in')
+        alpha: sampleNoiseFade(timeMs, duration, resolvedEasing, context, 'in', tuningNumber(tuning, 'NoiseFlickerMs', 35))
       }));
     case 'shatter':
       return motion(duration, (timeMs, context) => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
         const eased = applyEasing(resolvedEasing, progress);
+        const spread = tuningNumber(tuning, 'ShatterSpread', 1);
         return {
-          x: deterministicNoise(context.seed + context.index * 71) * 360 * (1 - eased),
-          y: deterministicNoise(context.seed + context.index * 97) * 240 * (1 - eased),
-          rotation: deterministicNoise(context.seed + context.index * 113) * 1.4 * (1 - eased),
+          x: deterministicNoise(context.seed + context.index * 71) * 360 * spread * (1 - eased),
+          y: deterministicNoise(context.seed + context.index * 97) * 240 * spread * (1 - eased),
+          rotation: deterministicNoise(context.seed + context.index * 113) * 1.4 * tuningNumber(tuning, 'ShatterRotation', 1) * (1 - eased),
           alpha: eased
         };
       });
@@ -229,23 +253,30 @@ export function createEntrance(
 export function createSustain(name: SustainName, tuning: MotionTuning = {}): MotionClip {
   switch (name) {
     case 'shake':
-      return motion(Number.POSITIVE_INFINITY, (timeMs, context) => ({
-        x: Math.sin(timeMs * 0.045 + context.index * 1.7) * 3 * context.intensity,
-        y: Math.cos(timeMs * 0.057 + context.index * 2.1) * 2 * context.intensity,
-        rotation: Math.sin(timeMs * 0.031 + context.index) * 0.012 * context.intensity
-      }));
+      return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
+        const amount = tuningNumber(tuning, 'shakeAmount', 3);
+        const time = timeMs * tuningNumber(tuning, 'shakeSpeed', 1);
+        return {
+          x: Math.sin(time * 0.045 + context.index * 1.7) * amount * context.intensity,
+          y: Math.cos(time * 0.057 + context.index * 2.1) * amount * (2 / 3) * context.intensity,
+          rotation: Math.sin(time * 0.031 + context.index) * tuningNumber(tuning, 'shakeRotation', 0.012) * context.intensity
+        };
+      });
     case 'pulse':
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
-        const scale = 1 + Math.sin(timeMs * Math.PI * 2 / 700) * 0.055 * context.intensity;
+        const period = Math.max(1, tuningNumber(tuning, 'pulsePeriodMs', 700));
+        const scale = 1 + Math.sin(timeMs * Math.PI * 2 / period) * tuningNumber(tuning, 'pulseAmount', 0.055) * context.intensity;
         return { scaleX: scale, scaleY: scale };
       });
     case 'glitch':
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
-        const frame = Math.floor(timeMs / 55);
-        const active = deterministicNoise(context.seed + frame * 19 + context.index * 7) > 0.58;
+        const frame = Math.floor(timeMs / Math.max(1, tuningNumber(tuning, 'glitchFrameMs', 55)));
+        // ノイズは -1〜1 の一様分布なので、発生頻度 f のしきい値は 1 - 2f（既定 0.21 → 0.58）。
+        const threshold = 1 - 2 * tuningNumber(tuning, 'glitchFrequency', 0.21);
+        const active = deterministicNoise(context.seed + frame * 19 + context.index * 7) > threshold;
         return active ? {
-          x: deterministicNoise(context.seed + frame * 23) * 14 * context.intensity,
-          skewX: deterministicNoise(context.seed + frame * 29) * 0.16 * context.intensity,
+          x: deterministicNoise(context.seed + frame * 23) * tuningNumber(tuning, 'glitchOffset', 14) * context.intensity,
+          skewX: deterministicNoise(context.seed + frame * 29) * tuningNumber(tuning, 'glitchSkew', 0.16) * context.intensity,
           alpha: 0.72 + Math.abs(deterministicNoise(context.seed + frame * 31)) * 0.28
         } : {};
       });
@@ -266,7 +297,8 @@ export function createSustain(name: SustainName, tuning: MotionTuning = {}): Mot
       });
     case 'compress':
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
-        const wave = Math.sin(timeMs * Math.PI * 2 / 1100) * 0.1 * context.intensity;
+        const period = Math.max(1, tuningNumber(tuning, 'compressPeriodMs', 1100));
+        const wave = Math.sin(timeMs * Math.PI * 2 / period) * tuningNumber(tuning, 'compressAmount', 0.1) * context.intensity;
         return { scaleX: 1 + wave, scaleY: 1 - wave };
       });
     case 'still':
@@ -284,13 +316,14 @@ function sampleNoiseFade(
   duration: number,
   easing: EasingName,
   context: MotionContext,
-  direction: 'in' | 'out'
+  direction: 'in' | 'out',
+  flickerMs = 35
 ): number {
   const progress = Math.min(1, Math.max(0, timeMs / Math.max(1, duration)));
   if (progress >= 1) return direction === 'in' ? 1 : 0;
   const eased = applyEasing(easing, progress);
   const visibility = direction === 'in' ? eased : 1 - eased;
-  const frame = Math.floor(timeMs / 35);
+  const frame = Math.floor(timeMs / Math.max(1, flickerMs));
   const threshold = (deterministicNoise(context.seed + frame * 173 + context.index * 29) + 1) / 2;
   const level = (deterministicNoise(context.seed + frame * 181 + context.index * 37) + 1) / 2;
   return threshold < visibility
@@ -359,33 +392,57 @@ export function createExit(
           alpha: progress < 0.8 ? 1 : 1 - (progress - 0.8) / 0.2
         };
       });
-    case 'slam':
+    case 'slam': {
+      const endScale = tuningNumber(tuning, 'SlamScale', 3.2);
       return parallel(
-        tween(duration, {}, { scaleX: 3.2, scaleY: 3.2 }, resolvedEasing),
+        tween(duration, {}, { scaleX: endScale, scaleY: endScale }, resolvedEasing),
         tween(duration, { alpha: 1 }, { alpha: 0 }, 'easeInCubic')
       );
-    case 'slide':
-      return tween(duration, {}, { x: 280, alpha: 0, skewX: 0.18 }, resolvedEasing);
-    case 'scale':
-      return tween(duration, {}, { scaleX: 0.08, scaleY: 0.08, alpha: 0 }, resolvedEasing);
+    }
+    case 'slide': {
+      const travel = travelVector(tuningString(tuning, 'SlideDirection', 'right'));
+      const distance = tuningNumber(tuning, 'SlideDistance', 280);
+      const skew = tuningNumber(tuning, 'SlideSkew', 0.18);
+      return tween(
+        duration,
+        {},
+        { x: travel.x * distance, y: travel.y * distance, alpha: 0, skewX: skew * travel.x },
+        resolvedEasing
+      );
+    }
+    case 'scale': {
+      const minimum = tuningNumber(tuning, 'ScaleMin', 0.08);
+      return tween(duration, {}, { scaleX: minimum, scaleY: minimum, alpha: 0 }, resolvedEasing);
+    }
     case 'collapse':
-      return tween(duration, {}, { scaleY: 0.02, scaleX: 1.3, alpha: 0 }, resolvedEasing);
+      return tween(
+        duration,
+        {},
+        { scaleY: tuningNumber(tuning, 'CollapseSquash', 0.02), scaleX: tuningNumber(tuning, 'CollapseStretch', 1.3), alpha: 0 },
+        resolvedEasing
+      );
     case 'fall':
-      return tween(duration, {}, { y: 360, rotation: 0.35, alpha: 0 }, resolvedEasing);
+      return tween(
+        duration,
+        {},
+        { y: tuningNumber(tuning, 'FallHeight', 360), rotation: tuningNumber(tuning, 'FallRotation', 0.35), alpha: 0 },
+        resolvedEasing
+      );
     case 'shatter':
       return motion(duration, (timeMs, context) => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
         const eased = applyEasing(resolvedEasing, progress);
+        const spread = tuningNumber(tuning, 'ShatterSpread', 1);
         return {
-          x: deterministicNoise(context.seed + context.index * 131) * 420 * eased,
-          y: (80 + Math.abs(deterministicNoise(context.seed + context.index * 149)) * 380) * eased,
-          rotation: deterministicNoise(context.seed + context.index * 167) * 2.4 * eased,
+          x: deterministicNoise(context.seed + context.index * 131) * 420 * spread * eased,
+          y: (80 + Math.abs(deterministicNoise(context.seed + context.index * 149)) * 380) * spread * eased,
+          rotation: deterministicNoise(context.seed + context.index * 167) * 2.4 * tuningNumber(tuning, 'ShatterRotation', 1) * eased,
           alpha: Math.max(0, 1 - applyEasing('easeInQuad', progress))
         };
       });
     case 'noise':
       return motion(duration, (timeMs, context) => ({
-        alpha: sampleNoiseFade(timeMs, duration, resolvedEasing, context, 'out')
+        alpha: sampleNoiseFade(timeMs, duration, resolvedEasing, context, 'out', tuningNumber(tuning, 'NoiseFlickerMs', 35))
       }));
     case 'instant':
     default:
@@ -615,9 +672,10 @@ export function createScreenMotion(name: ScreenMotionName, tuning: MotionTuning 
   switch (name) {
     case 'cameraShake':
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
-        // 衝撃直後を強くし、約450msで微振動へ収束させる。
-        const impact = Math.exp(-Math.max(0, timeMs) / 170);
-        const amplitude = (0.22 + impact * 1.9) * context.intensity;
+        // 衝撃直後を強くし、既定では約450msで微振動へ収束させる。
+        const impact = Math.exp(-Math.max(0, timeMs) / Math.max(1, tuningNumber(tuning, 'cameraShakeDecayMs', 170)));
+        const amplitude = (tuningNumber(tuning, 'cameraShakeBase', 0.22) + impact * 1.9)
+          * tuningNumber(tuning, 'cameraShakeAmount', 1) * context.intensity;
         return {
           x: (Math.sin(timeMs * 0.071) + Math.sin(timeMs * 0.113) * 0.45) * 4 * amplitude,
           y: (Math.cos(timeMs * 0.083) + Math.sin(timeMs * 0.137) * 0.35) * 3 * amplitude,
@@ -626,20 +684,30 @@ export function createScreenMotion(name: ScreenMotionName, tuning: MotionTuning 
       });
     case 'zoom':
       return motion(Number.POSITIVE_INFINITY, timeMs => {
-        const scale = 1 + (1 - Math.cos(timeMs * Math.PI * 2 / 2400)) * 0.025;
+        const period = Math.max(1, tuningNumber(tuning, 'zoomPeriodMs', 2400));
+        // ズーム量は最大拡大分。(1 - cos) が 0〜2 なので半分を掛ける。
+        const scale = 1 + (1 - Math.cos(timeMs * Math.PI * 2 / period)) * tuningNumber(tuning, 'zoomAmount', 0.05) / 2;
         return { scaleX: scale, scaleY: scale };
       });
     case 'rgbDrift':
-      return motion(Number.POSITIVE_INFINITY, timeMs => ({
-        skewX: Math.sin(timeMs * Math.PI * 2 / 1500) * 0.018,
-        x: Math.sin(timeMs * Math.PI * 2 / 900) * 2
-      }));
+      // 色ずれ（RGBの残像）の幅はテンプレート側の rgbDriftSplit で調整する。
+      return motion(Number.POSITIVE_INFINITY, timeMs => {
+        const sway = tuningNumber(tuning, 'rgbDriftSway', 1);
+        return {
+          skewX: Math.sin(timeMs * Math.PI * 2 / 1500) * 0.018 * sway,
+          x: Math.sin(timeMs * Math.PI * 2 / 900) * 2 * sway
+        };
+      });
     case 'afterimage':
-      return motion(Number.POSITIVE_INFINITY, timeMs => ({
-        rotation: Math.sin(timeMs * Math.PI * 2 / 3200) * 0.008,
-        scaleX: 1 + Math.sin(timeMs * Math.PI * 2 / 1800) * 0.012,
-        scaleY: 1 + Math.sin(timeMs * Math.PI * 2 / 1800) * 0.012
-      }));
+      // 残像の広がり・濃さはテンプレート側の afterimageSpread / afterimageOpacity で調整する。
+      return motion(Number.POSITIVE_INFINITY, timeMs => {
+        const sway = tuningNumber(tuning, 'afterimageSway', 1);
+        return {
+          rotation: Math.sin(timeMs * Math.PI * 2 / 3200) * 0.008 * sway,
+          scaleX: 1 + Math.sin(timeMs * Math.PI * 2 / 1800) * 0.012 * sway,
+          scaleY: 1 + Math.sin(timeMs * Math.PI * 2 / 1800) * 0.012 * sway
+        };
+      });
     case 'whipPan':
       // WHIP PAN: フレーズ冒頭（既定420ms）で流れ込み、ぼけと傾きを残して減速着地する。
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {

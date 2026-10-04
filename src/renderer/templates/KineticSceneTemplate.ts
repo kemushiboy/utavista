@@ -66,7 +66,7 @@ function selectedMotion(values: Record<string, unknown>, name: string, fallback:
 }
 
 /** 出現・消失・継続・画面全体の各モーション固有の調整値を、選択中のときだけ表示する項目として作る。 */
-function buildMotionTuningParams(): ParameterConfig[] {
+function buildMotionTuningParams(): Record<'entrance' | 'exit' | 'sustain' | 'screen', ParameterConfig[]> {
   const toConfig = (spec: MotionTuningSpec, name: string, label: string, defaultValue: number | string,
     visibleWhen: (values: Record<string, unknown>) => boolean): ParameterConfig => ({
     name,
@@ -80,7 +80,9 @@ function buildMotionTuningParams(): ParameterConfig[] {
     visibleWhen
   });
 
-  const configs: ParameterConfig[] = [];
+  const groups: Record<'entrance' | 'exit' | 'sustain' | 'screen', ParameterConfig[]> = {
+    entrance: [], exit: [], sustain: [], screen: []
+  };
   (['entrance', 'exit'] as const).forEach(direction => {
     const motionParam = direction === 'entrance' ? 'entranceMotion' : 'exitMotion';
     const fallback = direction === 'entrance' ? 'slam' : 'collapse';
@@ -88,7 +90,7 @@ function buildMotionTuningParams(): ParameterConfig[] {
     Object.entries(transitionTuningSpecs).forEach(([motionName, specs]) => {
       specs
         .filter(spec => !spec.directions || spec.directions.includes(direction))
-        .forEach(spec => configs.push(toConfig(
+        .forEach(spec => groups[direction].push(toConfig(
           spec,
           transitionParamName(direction, spec.key),
           `${prefix}（${motionName}）: ${spec.label}`,
@@ -97,15 +99,30 @@ function buildMotionTuningParams(): ParameterConfig[] {
         )));
     });
   });
-  Object.entries(sustainTuningSpecs).forEach(([motionName, specs]) => specs.forEach(spec => configs.push(toConfig(
+  Object.entries(sustainTuningSpecs).forEach(([motionName, specs]) => specs.forEach(spec => groups.sustain.push(toConfig(
     spec, spec.key, `継続（${motionName}）: ${spec.label}`, spec.default,
     values => selectedMotion(values, 'sustainMotion', 'pulse') === motionName
   ))));
-  Object.entries(screenTuningSpecs).forEach(([motionName, specs]) => specs.forEach(spec => configs.push(toConfig(
+  Object.entries(screenTuningSpecs).forEach(([motionName, specs]) => specs.forEach(spec => groups.screen.push(toConfig(
     spec, spec.key, `画面全体（${motionName}）: ${spec.label}`, spec.default,
     values => values.screenMotion === motionName
   ))));
-  return configs;
+  return groups;
+}
+
+/** 各モーションの調整項目を、対応する選択欄（または時間・イージング）の直後へ差し込む。 */
+function placeMotionTuningParams(configs: ParameterConfig[]): ParameterConfig[] {
+  const groups = buildMotionTuningParams();
+  const anchors: Array<[string, ParameterConfig[]]> = [
+    ['sustainMotion', groups.sustain],
+    ['screenMotion', groups.screen],
+    ['entranceEasing', groups.entrance],
+    ['exitEasing', groups.exit]
+  ];
+  return configs.flatMap(config => {
+    const anchor = anchors.find(([name]) => name === config.name);
+    return anchor ? [config, ...anchor[1]] : [config];
+  });
 }
 
 /** タイポグラフィエフェクトの詳細項目は、そのエフェクトがONのときだけ表示する。 */
@@ -161,7 +178,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   };
 
   getParameterConfig(): ParameterConfig[] {
-    return withVisibilityRules([
+    return withVisibilityRules(placeMotionTuningParams([
       { name: 'fontSize', type: 'number', default: 112, min: 20, max: 300, step: 1, label: '文字サイズ' },
       {
         name: 'fontFamily',
@@ -237,9 +254,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'karaokeFillColor', type: 'color', default: '#FF5C8A', label: '塗りの色' },
       { name: 'emitterLineRate', type: 'number', default: 12, min: 1, max: 60, step: 1, label: '集中線の更新レート (fps)' },
       { name: 'emitterLineWidth', type: 'number', default: 5, min: 0.5, max: 40, step: 0.5, label: '集中線の最大太さ (px)' },
-      { name: 'emitterInnerRadius', type: 'number', default: 0.55, min: 0, max: 3, step: 0.05, label: '集中線の内側半径（語の大きさ比）' },
-      ...buildMotionTuningParams()
-    ]);
+      { name: 'emitterInnerRadius', type: 'number', default: 0.55, min: 0, max: 3, step: 0.05, label: '集中線の内側半径（語の大きさ比）' }
+    ]));
   }
 
   animateContainer(
@@ -885,16 +901,18 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       const wave = Math.sin(nowMs * 0.025 + echoIndex * Math.PI);
 
       if (mode === 'rgb') {
+        const split = numberParam(params, 'rgbDriftSplit', 1);
         echo.tint = echoIndex === 0 ? 0xff245f : 0x20e3ff;
         echo.alpha = 0.42;
-        echo.position.set(direction * (4 + Math.abs(wave) * 5) * intensity, wave * 2 * intensity);
+        echo.position.set(direction * (4 + Math.abs(wave) * 5) * intensity * split, wave * 2 * intensity * split);
         echo.scale.set(1, 1);
         echo.blendMode = PIXI.BLEND_MODES.ADD;
       } else {
+        const spread = numberParam(params, 'afterimageSpread', 1);
         echo.tint = 0xffffff;
-        echo.alpha = Math.max(0.08, 0.22 - echoIndex * 0.06);
-        echo.position.set(direction * (8 + echoIndex * 7) * intensity, direction * 3 * intensity);
-        const echoScale = 1 + (echoIndex + 1) * 0.045 * intensity;
+        echo.alpha = Math.min(1, Math.max(0.08, 0.22 - echoIndex * 0.06) * numberParam(params, 'afterimageOpacity', 1));
+        echo.position.set(direction * (8 + echoIndex * 7) * intensity * spread, direction * 3 * intensity * spread);
+        const echoScale = 1 + (echoIndex + 1) * 0.045 * intensity * spread;
         echo.scale.set(echoScale);
         echo.blendMode = PIXI.BLEND_MODES.SCREEN;
       }

@@ -100,6 +100,19 @@ assert.equal(configByName.get('shuffleRate')?.visibleWhen?.({ shuffleEnabled: fa
 assert.equal(configByName.get('emitterLineRate')?.visibleWhen?.({ emittersEnabled: true, emitterStyle: 'eyes' }), false);
 assert.ok(configByName.get('emitterLineRate')?.visibleWhen?.({ emittersEnabled: true, emitterStyle: 'speedLines' }));
 
+// 調整項目は対応する選択欄（時間・イージング）の直後に並ぶ。
+const indexOfConfig = (name: string) => configNames.indexOf(name);
+assert.ok(indexOfConfig('entranceSlamScale') === indexOfConfig('entranceEasing') + 1, '出現の調整項目が出現イージングの直後にありません');
+assert.ok(indexOfConfig('exitSlamScale') === indexOfConfig('exitEasing') + 1, '消失の調整項目が消失イージングの直後にありません');
+assert.ok(indexOfConfig('shakeAmount') === indexOfConfig('sustainMotion') + 1, '継続の調整項目が継続の直後にありません');
+assert.ok(indexOfConfig('cameraShakeAmount') === indexOfConfig('screenMotion') + 1, '画面全体の調整項目が画面全体の直後にありません');
+// 既存モーションの調整値も反映される。
+assert.ok(
+  Math.abs(createEntrance('slide', 600, 'auto', resolveTransitionTuning({ entranceSlideDirection: 'up', entranceSlideDistance: 100 }, 'entrance', 'slide')).sample(0, context).y - 100) < 1e-6,
+  'slideの向き・距離が反映されていません'
+);
+assert.ok(Math.abs(createExit('scale', 600, 'auto', resolveTransitionTuning({ exitScaleMin: 0.5 }, 'exit', 'scale')).sample(600, context).scaleX - 0.5) < 1e-6);
+
 const lowBounce = createEntrance('bounce', 600, 'auto', resolveTransitionTuning({ entranceBounceHeight: 100 }, 'entrance', 'bounce'));
 assert.ok(Math.abs(lowBounce.sample(0, context).y + 100) < 1e-6, '落下の高さが反映されていません');
 assert.equal(

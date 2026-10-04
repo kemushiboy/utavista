@@ -22,8 +22,36 @@ export interface MotionTuningSpec {
 
 const directionOptions = ['bottom', 'top', 'left', 'right'];
 
+const travelOptions = ['right', 'left', 'down', 'up'];
+
 /** 出現・消失で共通の動き（値は方向ごとに別々に持つ）。 */
 export const transitionTuningSpecs: Record<string, MotionTuningSpec[]> = {
+  slam: [
+    { key: 'SlamScale', label: '倍率（出現は開始時・消失は終了時）', default: 3.2, min: 0.1, max: 12, step: 0.1 }
+  ],
+  slide: [
+    { key: 'SlideDirection', label: '移動の向き', default: 'right', options: travelOptions },
+    { key: 'SlideDistance', label: '移動距離 (px)', default: 280, min: 0, max: 2000, step: 10 },
+    { key: 'SlideSkew', label: '傾き', default: 0.18, min: 0, max: 1, step: 0.01 }
+  ],
+  scale: [
+    { key: 'ScaleMin', label: '最小倍率', default: 0.08, min: 0, max: 1, step: 0.01 }
+  ],
+  collapse: [
+    { key: 'CollapseSquash', label: '縦の潰れ（倍率）', default: 0.02, min: 0, max: 1, step: 0.01 },
+    { key: 'CollapseStretch', label: '横の伸び（倍率）', default: 1.3, min: 0.2, max: 4, step: 0.05 }
+  ],
+  fall: [
+    { key: 'FallHeight', label: '落下距離 (px)', default: 360, min: 0, max: 2000, step: 10 },
+    { key: 'FallRotation', label: '回転量 (rad)', default: 0.35, min: -3.14, max: 3.14, step: 0.01 }
+  ],
+  shatter: [
+    { key: 'ShatterSpread', label: '飛散距離（倍率）', default: 1, min: 0, max: 5, step: 0.05 },
+    { key: 'ShatterRotation', label: '回転量（倍率）', default: 1, min: 0, max: 5, step: 0.05 }
+  ],
+  noise: [
+    { key: 'NoiseFlickerMs', label: '明滅の間隔 (ms)', default: 35, min: 10, max: 500, step: 5 }
+  ],
   soft: [
     { key: 'SoftDistance', label: '移動量 (px)', default: 24, min: 0, max: 400, step: 1 },
     { key: 'SoftBlur', label: 'ぼかし量 (px)', default: 7, min: 0, max: 40, step: 0.5 }
@@ -64,6 +92,25 @@ export const transitionTuningSpecs: Record<string, MotionTuningSpec[]> = {
 
 /** 継続モーションの調整値（接頭辞なし）。 */
 export const sustainTuningSpecs: Record<string, MotionTuningSpec[]> = {
+  shake: [
+    { key: 'shakeAmount', label: '揺れ幅 (px)', default: 3, min: 0, max: 60, step: 0.5 },
+    { key: 'shakeSpeed', label: '揺れの速さ（倍率）', default: 1, min: 0.05, max: 10, step: 0.05 },
+    { key: 'shakeRotation', label: '回転の揺れ (rad)', default: 0.012, min: 0, max: 0.5, step: 0.002 }
+  ],
+  pulse: [
+    { key: 'pulsePeriodMs', label: '周期 (ms)', default: 700, min: 50, max: 10000, step: 10 },
+    { key: 'pulseAmount', label: '拡大量', default: 0.055, min: 0, max: 0.5, step: 0.005 }
+  ],
+  glitch: [
+    { key: 'glitchFrameMs', label: '判定間隔 (ms)', default: 55, min: 16, max: 1000, step: 1 },
+    { key: 'glitchFrequency', label: '発生頻度', default: 0.21, min: 0, max: 1, step: 0.01 },
+    { key: 'glitchOffset', label: '横ずれ (px)', default: 14, min: 0, max: 200, step: 1 },
+    { key: 'glitchSkew', label: '傾き', default: 0.16, min: 0, max: 1, step: 0.01 }
+  ],
+  compress: [
+    { key: 'compressPeriodMs', label: '周期 (ms)', default: 1100, min: 50, max: 10000, step: 10 },
+    { key: 'compressAmount', label: '伸縮量', default: 0.1, min: 0, max: 0.8, step: 0.01 }
+  ],
   breathe: [
     { key: 'breatheInhaleMs', label: '吸う時間 (ms)', default: 2600, min: 100, max: 10000, step: 50 },
     { key: 'breatheHoldMs', label: '止める時間 (ms)', default: 600, min: 0, max: 10000, step: 50 },
@@ -74,6 +121,24 @@ export const sustainTuningSpecs: Record<string, MotionTuningSpec[]> = {
 
 /** 画面全体モーションの調整値（接頭辞なし）。 */
 export const screenTuningSpecs: Record<string, MotionTuningSpec[]> = {
+  cameraShake: [
+    { key: 'cameraShakeAmount', label: '揺れの強さ（倍率）', default: 1, min: 0, max: 10, step: 0.05 },
+    { key: 'cameraShakeDecayMs', label: '衝撃の減衰時間 (ms)', default: 170, min: 10, max: 5000, step: 10 },
+    { key: 'cameraShakeBase', label: '残る微振動', default: 0.22, min: 0, max: 3, step: 0.01 }
+  ],
+  zoom: [
+    { key: 'zoomAmount', label: 'ズーム量', default: 0.05, min: 0, max: 1, step: 0.005 },
+    { key: 'zoomPeriodMs', label: '周期 (ms)', default: 2400, min: 100, max: 20000, step: 50 }
+  ],
+  rgbDrift: [
+    { key: 'rgbDriftSplit', label: '色ずれの幅（倍率）', default: 1, min: 0, max: 10, step: 0.05 },
+    { key: 'rgbDriftSway', label: '画面の揺れ（倍率）', default: 1, min: 0, max: 10, step: 0.05 }
+  ],
+  afterimage: [
+    { key: 'afterimageSpread', label: '残像の広がり（倍率）', default: 1, min: 0, max: 10, step: 0.05 },
+    { key: 'afterimageOpacity', label: '残像の濃さ（倍率）', default: 1, min: 0, max: 4, step: 0.05 },
+    { key: 'afterimageSway', label: '画面の揺れ（倍率）', default: 1, min: 0, max: 10, step: 0.05 }
+  ],
   whipPan: [
     { key: 'whipPanDirection', label: '流れ込む方向（来る側）', default: 'right', options: ['right', 'left', 'top', 'bottom'] },
     { key: 'whipPanDurationMs', label: '流し時間 (ms)', default: 420, min: 50, max: 3000, step: 10 },
