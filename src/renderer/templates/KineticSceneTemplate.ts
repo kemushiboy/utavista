@@ -26,7 +26,16 @@ import {
   createScreenMotion,
   createSustain,
   MotionState,
+  MotionTuningSpec,
   normalizeMotionName,
+  resolveScreenTuning,
+  resolveSustainTuning,
+  resolveTransitionTuning,
+  screenTuningSpecs,
+  sustainTuningSpecs,
+  transitionDefault,
+  transitionParamName,
+  transitionTuningSpecs,
   sampleClip,
   sceneCatalog,
   sampleVariableWeightPulse,
@@ -51,6 +60,86 @@ function stringParam(params: Record<string, unknown>, name: string, fallback: st
   return typeof value === 'string' && value.length > 0 ? value : fallback;
 }
 
+/** 現在の値で選ばれているモーション名（旧名は新名へ読み替える）。 */
+function selectedMotion(values: Record<string, unknown>, name: string, fallback: string): string {
+  return normalizeMotionName(typeof values[name] === 'string' ? values[name] as string : fallback);
+}
+
+/** 出現・消失・継続・画面全体の各モーション固有の調整値を、選択中のときだけ表示する項目として作る。 */
+function buildMotionTuningParams(): ParameterConfig[] {
+  const toConfig = (spec: MotionTuningSpec, name: string, label: string, defaultValue: number | string,
+    visibleWhen: (values: Record<string, unknown>) => boolean): ParameterConfig => ({
+    name,
+    type: typeof defaultValue === 'number' ? 'number' : 'string',
+    default: defaultValue,
+    min: spec.min,
+    max: spec.max,
+    step: spec.step,
+    options: spec.options,
+    label,
+    visibleWhen
+  });
+
+  const configs: ParameterConfig[] = [];
+  (['entrance', 'exit'] as const).forEach(direction => {
+    const motionParam = direction === 'entrance' ? 'entranceMotion' : 'exitMotion';
+    const fallback = direction === 'entrance' ? 'slam' : 'collapse';
+    const prefix = direction === 'entrance' ? '出現' : '消失';
+    Object.entries(transitionTuningSpecs).forEach(([motionName, specs]) => {
+      specs
+        .filter(spec => !spec.directions || spec.directions.includes(direction))
+        .forEach(spec => configs.push(toConfig(
+          spec,
+          transitionParamName(direction, spec.key),
+          `${prefix}（${motionName}）: ${spec.label}`,
+          transitionDefault(spec, direction),
+          values => selectedMotion(values, motionParam, fallback) === motionName
+        )));
+    });
+  });
+  Object.entries(sustainTuningSpecs).forEach(([motionName, specs]) => specs.forEach(spec => configs.push(toConfig(
+    spec, spec.key, `継続（${motionName}）: ${spec.label}`, spec.default,
+    values => selectedMotion(values, 'sustainMotion', 'pulse') === motionName
+  ))));
+  Object.entries(screenTuningSpecs).forEach(([motionName, specs]) => specs.forEach(spec => configs.push(toConfig(
+    spec, spec.key, `画面全体（${motionName}）: ${spec.label}`, spec.default,
+    values => values.screenMotion === motionName
+  ))));
+  return configs;
+}
+
+/** タイポグラフィエフェクトの詳細項目は、そのエフェクトがONのときだけ表示する。 */
+const effectDetailRules: Array<{ prefix: string; enabled: string; extra?: (values: Record<string, unknown>) => boolean }> = [
+  { prefix: 'shuffle', enabled: 'shuffleEnabled' },
+  { prefix: 'repetition', enabled: 'repetitionEnabled' },
+  { prefix: 'organic', enabled: 'organicEnabled' },
+  { prefix: 'destruction', enabled: 'destructionEnabled' },
+  { prefix: 'emitterLine', enabled: 'emittersEnabled', extra: values => values.emitterStyle === 'speedLines' },
+  { prefix: 'emitterInnerRadius', enabled: 'emittersEnabled', extra: values => values.emitterStyle === 'speedLines' },
+  { prefix: 'emitter', enabled: 'emittersEnabled' },
+  { prefix: 'surface', enabled: 'surfaceEnabled' },
+  { prefix: 'variableWeight', enabled: 'variableWeightEnabled' },
+  { prefix: 'kerningMotion', enabled: 'kerningMotionEnabled' },
+  { prefix: 'baselineWave', enabled: 'baselineWaveEnabled' },
+  { prefix: 'karaokeFillColor', enabled: 'karaokeFillEnabled', extra: values => values.karaokeFillUseCustomColor === true },
+  { prefix: 'karaokeFill', enabled: 'karaokeFillEnabled' },
+  { prefix: 'impactOutline', enabled: 'impactOutlineEnabled' }
+];
+
+function withVisibilityRules(configs: ParameterConfig[]): ParameterConfig[] {
+  return configs.map(config => {
+    if (config.visibleWhen) return config;
+    const rule = effectDetailRules.find(candidate =>
+      config.name !== candidate.enabled && config.name.startsWith(candidate.prefix)
+    );
+    if (!rule) return config;
+    return {
+      ...config,
+      visibleWhen: values => values[rule.enabled] === true && (!rule.extra || rule.extra(values))
+    };
+  });
+}
+
 /**
  * 小さなモーションをデータで組み合わせる、単語・場面ベースのキネティック・タイポグラフィ。
  * すべての状態は nowMs と seed から直接評価され、フレーム履歴を持たない。
@@ -72,7 +161,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   };
 
   getParameterConfig(): ParameterConfig[] {
-    return [
+    return withVisibilityRules([
       { name: 'fontSize', type: 'number', default: 112, min: 20, max: 300, step: 1, label: '文字サイズ' },
       {
         name: 'fontFamily',
@@ -140,8 +229,17 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'karaokeFillEnabled', type: 'boolean', default: false, label: 'カラオケ塗り' },
       { name: 'impactOutlineEnabled', type: 'boolean', default: false, label: '二重輪郭インパクト' },
       { name: 'impactOutlineSpread', type: 'number', default: 14, min: 2, max: 60, step: 1, label: '輪郭拡散幅 (px)' },
-      { name: 'impactOutlineDuration', type: 'number', default: 220, min: 60, max: 1200, step: 10, label: '輪郭拡散時間 (ms)' }
-    ];
+      { name: 'impactOutlineDuration', type: 'number', default: 220, min: 60, max: 1200, step: 10, label: '輪郭拡散時間 (ms)' },
+      { name: 'impactOutlineThickness', type: 'number', default: 3.4, min: 0.5, max: 30, step: 0.5, label: '輪郭の太さ (px)' },
+      { name: 'impactOutlineTrigger', type: 'string', default: 'word', options: ['word', 'character'], label: '輪郭の発動（word: 単語の開始 / character: 文字ごと）' },
+      { name: 'karaokeFillDirection', type: 'string', default: 'leftToRight', options: ['leftToRight', 'rightToLeft', 'topToBottom', 'bottomToTop'], label: '塗る方向' },
+      { name: 'karaokeFillUseCustomColor', type: 'boolean', default: false, label: '塗りの色を個別に指定' },
+      { name: 'karaokeFillColor', type: 'color', default: '#FF5C8A', label: '塗りの色' },
+      { name: 'emitterLineRate', type: 'number', default: 12, min: 1, max: 60, step: 1, label: '集中線の更新レート (fps)' },
+      { name: 'emitterLineWidth', type: 'number', default: 5, min: 0.5, max: 40, step: 0.5, label: '集中線の最大太さ (px)' },
+      { name: 'emitterInnerRadius', type: 'number', default: 0.55, min: 0, max: 3, step: 0.05, label: '集中線の内側半径（語の大きさ比）' },
+      ...buildMotionTuningParams()
+    ]);
   }
 
   animateContainer(
@@ -171,7 +269,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   removeVisualElements(container: PIXI.Container): void {
     this.typographyEffects.cleanup(container);
     this.applyBlur(container, 0);
-    this.applyClip(container, { clipTop: 0, clipBottom: 0 }, 0, 0);
+    this.applyClip(container, { clipTop: 0, clipBottom: 0, clipLeft: 0, clipRight: 0 }, 0, 0, 0);
     container.position.set(0, 0);
     container.scale.set(1, 1);
     container.skew.set(0, 0);
@@ -194,7 +292,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       intensity
     };
     const scene = this.resolveScene(params);
-    const screenState = sampleClip(createScreenMotion(scene.screen), nowMs - startMs, context);
+    const screenState = sampleClip(createScreenMotion(scene.screen, resolveScreenTuning(params, scene.screen)), nowMs - startMs, context);
 
     container.position.set(
       width / 2 + numberParam(params, 'phraseOffsetX', 0) + screenState.x,
@@ -248,13 +346,15 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const entrance = createEntrance(
       scene.entrance,
       entranceDuration,
-      stringParam(params, 'entranceEasing', 'auto') as EasingSelection
+      stringParam(params, 'entranceEasing', 'auto') as EasingSelection,
+      resolveTransitionTuning(params, 'entrance', scene.entrance)
     );
-    const sustain = createSustain(scene.sustain);
+    const sustain = createSustain(scene.sustain, resolveSustainTuning(params, scene.sustain));
     const exit = createExit(
       scene.exit,
       exitDuration,
-      stringParam(params, 'exitEasing', 'auto') as EasingSelection
+      stringParam(params, 'exitEasing', 'auto') as EasingSelection,
+      resolveTransitionTuning(params, 'exit', scene.exit)
     );
 
     let phaseState;
@@ -278,7 +378,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     container.rotation = layout.rotation + motionState.rotation;
     container.alpha = Math.max(0, Math.min(1, motionState.alpha));
     this.applyBlur(container, motionState.blur);
-    this.applyClip(container, motionState, wordWidth / 2 + fontSize * 2, fontSize * 0.75);
+    this.applyClip(container, motionState, wordWidth / 2 + fontSize * 0.1, fontSize * 0.75, wordWidth / 2 + fontSize * 2);
 
     const color = nowMs < startMs
       ? stringParam(params, 'textColor', '#F3F0E8')
@@ -295,7 +395,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       effectStartMs: entranceStartMs,
       seed,
       index,
-      intensity
+      intensity,
+      characterStartsMs: this.resolveCharacterStarts(text, params, startMs, endMs)
     };
     this.typographyEffects.prepareSource(textObject, text, typographyParams, typographyContext);
     this.updateCharacterText(
@@ -445,6 +546,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const waitingColor = stringParam(params, 'textColor', '#F3F0E8');
     const activeColor = stringParam(params, 'activeTextColor', '#FFFFFF');
     const completedColor = stringParam(params, 'completedTextColor', '#A8FF60');
+    const fillDirection = stringParam(params, 'karaokeFillDirection', 'leftToRight');
     const characterCount = Math.max(1, originalCharacters.length);
     const fallbackDuration = Math.max(1, wordEndMs - wordStartMs) / characterCount;
     const widths: number[] = [];
@@ -482,6 +584,9 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       }
 
       const characterWidth = this.measureTextWidth(character, fontFamily, fontSize, fontWeight);
+      const fillColor = params.karaokeFillUseCustomColor === true
+        ? stringParam(params, 'karaokeFillColor', completedColor)
+        : completedColor;
       const fillProgress = params.karaokeFillEnabled === true && nowMs >= charStartMs && nowMs <= charEndMs
         ? (nowMs - charStartMs) / Math.max(1, charEndMs - charStartMs)
         : null;
@@ -489,10 +594,11 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         characterText,
         fillProgress,
         visibleCharacter,
-        () => this.createCharacterStyle(fontFamily, fontSize, fontWeight, completedColor),
-        `${visibleCharacter}|${fontFamily}|${fontSize}|${fontWeight}|${completedColor}`,
+        () => this.createCharacterStyle(fontFamily, fontSize, fontWeight, fillColor),
+        `${visibleCharacter}|${fontFamily}|${fontSize}|${fontWeight}|${fillColor}`,
         characterWidth,
-        fontSize
+        fontSize,
+        fillDirection
       );
       widths.push(characterWidth);
     });
@@ -533,7 +639,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     createFillStyle: () => PIXI.TextStyle,
     signature: string,
     characterWidth: number,
-    fontSize: number
+    fontSize: number,
+    direction: string
   ): void {
     let fill = characterText.children.find(child => child.name === KARAOKE_FILL_NAME) as
       (PIXI.Text & { __kineticSignature?: string }) | undefined;
@@ -565,7 +672,26 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     }
     mask.clear();
     mask.beginFill(0xffffff);
-    mask.drawRect(-characterWidth / 2 - 2, -fontSize, (characterWidth + 2) * Math.min(1, Math.max(0, progress)), fontSize * 2);
+    const amount = Math.min(1, Math.max(0, progress));
+    const width = characterWidth + 4;
+    const height = fontSize * 2;
+    const left = -width / 2;
+    const top = -fontSize;
+    if (direction === 'rightToLeft') {
+      mask.drawRect(left + width * (1 - amount), top, width * amount, height);
+    } else if (direction === 'topToBottom' || direction === 'bottomToTop') {
+      // 縦方向は字面の高さを基準にし、塗り始め・終わりが余白で止まって見えないようにする。
+      const glyphHeight = fontSize * 1.1;
+      const filled = glyphHeight * amount;
+      // 塗り終わっていない側は字面の外まで含めないよう、塗った部分＋外側の余白だけを開く。
+      if (direction === 'topToBottom') {
+        mask.drawRect(left, top, width, fontSize - glyphHeight / 2 + filled);
+      } else {
+        mask.drawRect(left, glyphHeight / 2 - filled, width, fontSize - glyphHeight / 2 + filled);
+      }
+    } else {
+      mask.drawRect(left, top, width * amount, height);
+    }
     mask.endFill();
   }
 
@@ -598,6 +724,17 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     return width;
   }
 
+  /** 文字ごとの歌唱開始時刻。文字タイミングが無い場合は単語の長さを均等割りする。 */
+  private resolveCharacterStarts(text: string, params: Record<string, unknown>, wordStartMs: number, wordEndMs: number): number[] {
+    const characters = Array.from(text);
+    const timings = Array.isArray(params.chars) ? params.chars as CharUnit[] : [];
+    const fallbackDuration = Math.max(1, wordEndMs - wordStartMs) / Math.max(1, characters.length);
+    return characters.map((_, characterIndex) => {
+      const start = timings[characterIndex]?.start;
+      return typeof start === 'number' ? start : wordStartMs + fallbackDuration * characterIndex;
+    });
+  }
+
   private measureWordWidth(text: string, params: Record<string, unknown>, fontSize: number): number {
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
     const fontWeight = stringParam(params, 'fontWeight', '700');
@@ -626,17 +763,21 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     holder.__kineticBlur.blur = amount;
   }
 
-  /** clipTop/clipBottom の割合だけ上下を隠す矩形マスク。どちらも0ならマスクを外す。 */
+  /** clipTop/Bottom/Left/Right の割合だけ各辺を隠す矩形マスク。すべて0ならマスクを外す。 */
   private applyClip(
     container: PIXI.Container,
-    state: Pick<MotionState, 'clipTop' | 'clipBottom'>,
-    halfWidth: number,
-    halfHeight: number
+    state: Pick<MotionState, 'clipTop' | 'clipBottom' | 'clipLeft' | 'clipRight'>,
+    textHalfWidth: number,
+    halfHeight: number,
+    paddedHalfWidth: number
   ): void {
-    const top = Math.max(0, Math.min(1, state.clipTop));
-    const bottom = Math.max(0, Math.min(1, state.clipBottom));
+    const clamp = (value: number) => Math.max(0, Math.min(1, value));
+    const top = clamp(state.clipTop);
+    const bottom = clamp(state.clipBottom);
+    const left = clamp(state.clipLeft);
+    const right = clamp(state.clipRight);
     let mask = container.children.find(child => child.name === CLIP_MASK_NAME) as PIXI.Graphics | undefined;
-    if (top <= 0.001 && bottom <= 0.001) {
+    if (top <= 0.001 && bottom <= 0.001 && left <= 0.001 && right <= 0.001) {
       if (mask) {
         if (container.mask === mask) container.mask = null;
         container.removeChild(mask);
@@ -652,9 +793,13 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const fullHeight = halfHeight * 2;
     const visibleTop = -halfHeight + fullHeight * top;
     const visibleHeight = Math.max(0, fullHeight * (1 - top - bottom));
+    // 左右の開閉は文字幅を基準にし、閉じていない側は装飾が切れないよう余白まで広げる。
+    const fullWidth = textHalfWidth * 2;
+    const visibleLeft = left > 0.001 ? -textHalfWidth + fullWidth * left : -paddedHalfWidth;
+    const visibleRight = right > 0.001 ? textHalfWidth - fullWidth * right : paddedHalfWidth;
     mask.clear();
     mask.beginFill(0xffffff);
-    mask.drawRect(-halfWidth, visibleTop, halfWidth * 2, visibleHeight);
+    mask.drawRect(visibleLeft, visibleTop, Math.max(0, visibleRight - visibleLeft), visibleHeight);
     mask.endFill();
     container.mask = mask;
   }
@@ -823,7 +968,12 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       baselineWaveStagger: numberParam(params, 'baselineWaveStagger', 55),
       impactOutlineEnabled: params.impactOutlineEnabled === true,
       impactOutlineSpread: numberParam(params, 'impactOutlineSpread', 14),
-      impactOutlineDuration: numberParam(params, 'impactOutlineDuration', 220)
+      impactOutlineDuration: numberParam(params, 'impactOutlineDuration', 220),
+      impactOutlineThickness: numberParam(params, 'impactOutlineThickness', 3.4),
+      impactOutlineTrigger: params.impactOutlineTrigger === 'character' ? 'character' : 'word',
+      emitterLineRate: numberParam(params, 'emitterLineRate', 12),
+      emitterLineWidth: numberParam(params, 'emitterLineWidth', 5),
+      emitterInnerRadius: numberParam(params, 'emitterInnerRadius', 0.55)
     };
   }
 }

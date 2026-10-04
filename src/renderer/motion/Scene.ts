@@ -10,6 +10,12 @@ import {
   repeat,
   tween
 } from './Motion';
+import {
+  MotionTuning,
+  directionVector,
+  tuningNumber,
+  tuningString
+} from './MotionTuning';
 
 export type LayoutName = 'center' | 'random' | 'circle' | 'vertical' | 'fill';
 /** 出現・消失の両方向で共通に選べる動き。 */
@@ -118,7 +124,8 @@ export function calculateLayout(name: LayoutName, context: LayoutContext): Layou
 export function createEntrance(
   name: EntranceName,
   duration: number,
-  easing: EasingSelection = 'auto'
+  easing: EasingSelection = 'auto',
+  tuning: MotionTuning = {}
 ): MotionClip {
   const resolvedEasing: EasingName = easing === 'auto'
     ? autoEntranceEasing(name)
@@ -130,28 +137,43 @@ export function createEntrance(
       // SOFT ENTER: 下から短く持ち上がり、ぼけた輪郭が澄む。
       return motion(duration, timeMs => {
         const eased = sampleProgress(timeMs);
-        return { y: 24 * (1 - eased), blur: 7 * (1 - eased), alpha: eased };
+        return {
+          y: tuningNumber(tuning, 'SoftDistance', 24) * (1 - eased),
+          blur: tuningNumber(tuning, 'SoftBlur', 7) * (1 - eased),
+          alpha: eased
+        };
       });
     case 'anticipate':
-      return motion(duration, timeMs => sampleAnticipation(sampleProgress(timeMs), 'in'));
+      return motion(duration, timeMs => sampleAnticipation(sampleProgress(timeMs), 'in', tuning));
     case 'spring':
-      // SPRING / SECOND ORDER: 減衰比0.42のばね応答で、行き過ぎを数回残して静止する。
+      // SPRING / SECOND ORDER: 減衰ばねの応答で、行き過ぎを数回残して静止する。
       return motion(duration, timeMs => {
         const progress = sampleProgress(timeMs);
-        const scale = sampleDampedSpring(progress);
+        const startScale = tuningNumber(tuning, 'SpringStartScale', 0);
+        const scale = startScale + (1 - startScale) * sampleDampedSpring(progress, tuning);
         return { scaleX: scale, scaleY: scale, alpha: Math.min(1, progress * 4) };
       });
     case 'bounce':
-      return motion(duration, timeMs => sampleBounceIn(sampleProgress(timeMs)));
+      return motion(duration, timeMs => sampleBounceIn(sampleProgress(timeMs), tuning));
     case 'turnstile':
-      return motion(duration, (timeMs, context) => sampleTurnstile(sampleProgress(timeMs), context, 'in'));
+      return motion(duration, (timeMs, context) => sampleTurnstile(sampleProgress(timeMs), context, 'in', tuning));
     case 'mask':
-      // MASKING: マスクが下から開き、中身は別の速度で 1.35→1 に縮んで段差を作る。
+      // MASKING: マスクが起点の辺から開き、中身は別の速度で縮んで段差を作る。
       return motion(duration, timeMs => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
         const content = applyEasing('easeOutCubic', progress);
-        const scale = 1.35 - 0.35 * content;
-        return { clipTop: 1 - sampleProgress(timeMs), y: 24 * (1 - content), scaleX: scale, scaleY: scale };
+        const startScale = tuningNumber(tuning, 'MaskScale', 1.35);
+        const scale = startScale + (1 - startScale) * content;
+        const edge = tuningString(tuning, 'MaskDirection', 'bottom');
+        const toward = directionVector(edge);
+        const offset = tuningNumber(tuning, 'MaskOffset', 24) * (1 - content);
+        return {
+          ...clipFromEdge(oppositeEdge(edge), 1 - sampleProgress(timeMs)),
+          x: -toward.x * offset,
+          y: -toward.y * offset,
+          scaleX: scale,
+          scaleY: scale
+        };
       });
     case 'genie':
       // GENIE の復帰側: 受け口から減速しながら横幅を遅れて広げる。
@@ -159,10 +181,14 @@ export function createEntrance(
         const progress = Math.min(1, timeMs / Math.max(1, duration));
         const eased = sampleProgress(timeMs);
         const widthProgress = applyEasing(resolvedEasing, Math.max(0, (progress - 0.12) / 0.88));
+        const squeeze = tuningNumber(tuning, 'GenieSqueeze', 0.96);
+        const toward = directionVector(tuningString(tuning, 'GenieDirection', 'bottom'));
+        const distance = tuningNumber(tuning, 'GenieDistance', 260) * (1 - eased);
         return {
-          y: 260 * (1 - eased),
-          scaleX: 0.04 + 0.96 * widthProgress,
-          scaleY: 0.2 + 0.8 * eased,
+          ...genieShape((1 - squeeze) + squeeze * widthProgress, 0.2 + 0.8 * eased, toward),
+          // 吸い込み口の辺から出てくる
+          x: -toward.x * distance,
+          y: -toward.y * distance,
           alpha: Math.min(1, progress * 5)
         };
       });
@@ -200,7 +226,7 @@ export function createEntrance(
   }
 }
 
-export function createSustain(name: SustainName): MotionClip {
+export function createSustain(name: SustainName, tuning: MotionTuning = {}): MotionClip {
   switch (name) {
     case 'shake':
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => ({
@@ -224,15 +250,18 @@ export function createSustain(name: SustainName): MotionClip {
         } : {};
       });
     case 'breathe':
-      // BREATHE: 吸う2.6s・止める0.6s・吐く2.4sの非対称な周期で、pulseより遅く大きく呼吸する。
+      // BREATHE: 既定は吸う2.6s・止める0.6s・吐く2.4sの非対称な周期で、pulseより遅く大きく呼吸する。
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
-        const phase = timeMs % 5600;
-        const inhale = phase < 2600
-          ? applyEasing('easeInOutSine', phase / 2600)
-          : phase < 3200
+        const inhaleMs = Math.max(1, tuningNumber(tuning, 'breatheInhaleMs', 2600));
+        const holdMs = Math.max(0, tuningNumber(tuning, 'breatheHoldMs', 600));
+        const exhaleMs = Math.max(1, tuningNumber(tuning, 'breatheExhaleMs', 2400));
+        const phase = timeMs % (inhaleMs + holdMs + exhaleMs);
+        const inhale = phase < inhaleMs
+          ? applyEasing('easeInOutSine', phase / inhaleMs)
+          : phase < inhaleMs + holdMs
             ? 1
-            : 1 - applyEasing('easeInOutSine', (phase - 3200) / 2400);
-        const scale = 1 + inhale * 0.08 * context.intensity;
+            : 1 - applyEasing('easeInOutSine', (phase - inhaleMs - holdMs) / exhaleMs);
+        const scale = 1 + inhale * tuningNumber(tuning, 'breatheAmount', 0.08) * context.intensity;
         return { scaleX: scale, scaleY: scale, alpha: 0.86 + inhale * 0.14 };
       });
     case 'compress':
@@ -272,7 +301,8 @@ function sampleNoiseFade(
 export function createExit(
   name: ExitName,
   duration: number,
-  easing: EasingSelection = 'auto'
+  easing: EasingSelection = 'auto',
+  tuning: MotionTuning = {}
 ): MotionClip {
   const resolvedEasing: EasingName = easing === 'auto'
     ? autoExitEasing(name)
@@ -284,38 +314,48 @@ export function createExit(
       // SOFT ENTER の逆: 上へ抜けながら輪郭をぼかして薄れる。
       return motion(duration, timeMs => {
         const eased = sampleProgress(timeMs);
-        return { y: -24 * eased, blur: 7 * eased, alpha: 1 - eased };
+        return {
+          y: -tuningNumber(tuning, 'SoftDistance', 24) * eased,
+          blur: tuningNumber(tuning, 'SoftBlur', 7) * eased,
+          alpha: 1 - eased
+        };
       });
     case 'anticipate':
-      return motion(duration, timeMs => sampleAnticipation(sampleProgress(timeMs), 'out'));
+      return motion(duration, timeMs => sampleAnticipation(sampleProgress(timeMs), 'out', tuning));
     case 'spring':
       // 入りのばね応答を時間反転し、揺れてから一気に縮む。
       return motion(duration, timeMs => {
         const progress = sampleProgress(timeMs);
-        const scale = sampleDampedSpring(1 - progress);
+        const endScale = tuningNumber(tuning, 'SpringStartScale', 0);
+        const scale = endScale + (1 - endScale) * sampleDampedSpring(1 - progress, tuning);
         return { scaleX: scale, scaleY: scale, alpha: Math.min(1, (1 - progress) * 4) };
       });
     case 'bounce':
-      return motion(duration, timeMs => sampleBounceOut(sampleProgress(timeMs)));
+      return motion(duration, timeMs => sampleBounceOut(sampleProgress(timeMs), tuning));
     case 'turnstile':
-      return motion(duration, (timeMs, context) => sampleTurnstile(sampleProgress(timeMs), context, 'out'));
+      return motion(duration, (timeMs, context) => sampleTurnstile(sampleProgress(timeMs), context, 'out', tuning));
     case 'mask':
-      // マスクが下から閉じ、残った上側が上へ抜けて消える。
+      // マスクが起点の辺から閉じ、残った側が反対方向へ抜けて消える。
       return motion(duration, timeMs => {
         const eased = sampleProgress(timeMs);
-        const scale = 1 + 0.12 * eased;
-        return { clipBottom: eased, y: -24 * eased, scaleX: scale, scaleY: scale };
+        const scale = 1 + (tuningNumber(tuning, 'MaskScale', 1.12) - 1) * eased;
+        const edge = tuningString(tuning, 'MaskDirection', 'bottom');
+        const toward = directionVector(edge);
+        const offset = tuningNumber(tuning, 'MaskOffset', 24) * eased;
+        return { ...clipFromEdge(edge, eased), x: toward.x * offset, y: toward.y * offset, scaleX: scale, scaleY: scale };
       });
     case 'genie':
-      // GENIE: 横幅を先に絞り、加速しながら下の受け口へ吸い込まれる。
+      // GENIE: 横幅を先に絞り、加速しながら受け口へ吸い込まれる。
       return motion(duration, timeMs => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
         const eased = sampleProgress(timeMs);
         const funnel = applyEasing('easeInQuad', Math.min(1, progress * 1.25));
+        const toward = directionVector(tuningString(tuning, 'GenieDirection', 'bottom'));
+        const distance = tuningNumber(tuning, 'GenieDistance', 260) * eased;
         return {
-          y: 260 * eased,
-          scaleX: 1 - 0.96 * funnel,
-          scaleY: 1 - 0.8 * eased,
+          ...genieShape(1 - tuningNumber(tuning, 'GenieSqueeze', 0.96) * funnel, 1 - 0.8 * eased, toward),
+          x: -toward.x * distance,
+          y: -toward.y * distance,
           alpha: progress < 0.8 ? 1 : 1 - (progress - 0.8) / 0.2
         };
       });
@@ -385,10 +425,13 @@ function autoExitEasing(name: ExitName): EasingName {
   }
 }
 
-/** 減衰比0.42・固有角周波数11の2次系ステップ応答。p=1で1に一致するよう残差を補正する。 */
-function sampleDampedSpring(progress: number): number {
-  const damping = 0.42;
-  const omega = 11;
+/**
+ * 2次系（減衰ばね）のステップ応答。既定は減衰比0.42・固有角周波数11。
+ * p=1で1に一致するよう残差を補正する。
+ */
+function sampleDampedSpring(progress: number, tuning?: MotionTuning): number {
+  const damping = Math.min(0.99, Math.max(0.05, tuningNumber(tuning, 'SpringDamping', 0.42)));
+  const omega = Math.max(0.5, tuningNumber(tuning, 'SpringFrequency', 11));
   const dampedOmega = omega * Math.sqrt(1 - damping * damping);
   const response = (value: number): number => 1 - Math.exp(-damping * omega * value) * (
     Math.cos(dampedOmega * value) + (damping / Math.sqrt(1 - damping * damping)) * Math.sin(dampedOmega * value)
@@ -397,49 +440,67 @@ function sampleDampedSpring(progress: number): number {
   return response(clamped) + (1 - response(1)) * clamped;
 }
 
+/** 移動の向き（right/left/down/up）を単位ベクトルにする。 */
+function travelVector(direction: string): { x: number; y: number } {
+  switch (direction) {
+    case 'left': return { x: -1, y: 0 };
+    case 'down': return { x: 0, y: 1 };
+    case 'up': return { x: 0, y: -1 };
+    case 'right':
+    default: return { x: 1, y: 0 };
+  }
+}
+
 /**
- * ANTICIPATION: 本動作の約28%を逆方向への溜めに使い、
+ * ANTICIPATION: 本動作の一部（既定28%）を逆方向への溜めに使い、
  * 本動作後は減衰正弦で行き過ぎを戻す。
  */
-function sampleAnticipation(progress: number, direction: 'in' | 'out'): Partial<MotionState> {
-  const windUp = 0.28;
-  const pull = 36;
+function sampleAnticipation(progress: number, direction: 'in' | 'out', tuning?: MotionTuning): Partial<MotionState> {
+  const windUp = Math.min(0.9, Math.max(0.01, tuningNumber(tuning, 'AnticipateWindUp', 0.28)));
+  const pull = tuningNumber(tuning, 'AnticipatePull', 36);
+  const travel = travelVector(tuningString(tuning, 'AnticipateDirection', 'right'));
+  const along = (offset: number) => ({ x: travel.x * offset, y: travel.y * offset });
+  // 横移動のときだけ進行方向へ傾ける。
+  const lean = (amount: number) => ({ skewX: amount * travel.x });
   if (direction === 'in') {
-    const distance = 260;
+    const distance = tuningNumber(tuning, 'AnticipateDistance', 260);
+    const overshoot = tuningNumber(tuning, 'AnticipateOvershoot', 14);
     if (progress < windUp) {
       const local = progress / windUp;
-      return { x: -distance - pull * applyEasing('easeOutQuad', local), skewX: 0.06 * local, alpha: 0.45 * local };
+      return { ...along(-distance - pull * applyEasing('easeOutQuad', local)), ...lean(0.06 * local), alpha: 0.45 * local };
     }
     const local = (progress - windUp) / (1 - windUp);
     const main = applyEasing('easeOutCubic', Math.min(1, local / 0.55));
-    let x = -(distance + pull) * (1 - main);
+    let offset = -(distance + pull) * (1 - main);
     if (local > 0.55) {
       const settle = (local - 0.55) / 0.45;
-      x += 14 * Math.sin(settle * Math.PI * 2) * (1 - settle) * (1 - settle);
+      offset += overshoot * Math.sin(settle * Math.PI * 2) * (1 - settle) * (1 - settle);
     }
-    return { x, skewX: -0.16 * (1 - main), alpha: 0.45 + 0.55 * Math.min(1, local * 3) };
+    return { ...along(offset), ...lean(-0.16 * (1 - main)), alpha: 0.45 + 0.55 * Math.min(1, local * 3) };
   }
 
+  const distance = tuningNumber(tuning, 'AnticipateDistance', 294);
   if (progress < windUp) {
     const local = progress / windUp;
-    return { x: -pull * applyEasing('easeOutQuad', local), skewX: -0.05 * local };
+    return { ...along(-pull * applyEasing('easeOutQuad', local)), ...lean(-0.05 * local) };
   }
   const local = (progress - windUp) / (1 - windUp);
   return {
-    x: -pull + 330 * applyEasing('easeInCubic', local),
-    skewX: 0.16 * local,
+    ...along(-pull + (distance + pull) * applyEasing('easeInCubic', local)),
+    ...lean(0.16 * local),
     alpha: 1 - applyEasing('easeInQuad', local)
   };
 }
 
 /**
- * SQUASH & STRETCH: 反発係数0.62で3回弾む落下を解析解で評価する。
+ * SQUASH & STRETCH: 既定は反発係数0.62で3回弾む落下を解析解で評価する。
  * 速度に比例して縦へ伸ばし、接地の瞬間だけ潰す。面積は scaleX = 1 / scaleY で保つ。
  */
-function sampleBounceIn(progress: number): Partial<MotionState> {
-  const height = 320;
-  const restitution = 0.62;
-  const bounces = 3;
+function sampleBounceIn(progress: number, tuning?: MotionTuning): Partial<MotionState> {
+  const height = tuningNumber(tuning, 'BounceHeight', 320);
+  const restitution = Math.min(0.95, Math.max(0, tuningNumber(tuning, 'BounceRestitution', 0.62)));
+  const bounces = Math.max(0, Math.round(tuningNumber(tuning, 'BounceCount', 3)));
+  const deform = Math.max(0, tuningNumber(tuning, 'BounceSquash', 0.3));
   let total = 1;
   for (let bounce = 1; bounce <= bounces; bounce += 1) total += 2 * Math.pow(restitution, bounce);
   const fallTime = 1 / total;
@@ -481,25 +542,27 @@ function sampleBounceIn(progress: number): Partial<MotionState> {
     }
   }
 
-  const stretch = 1 + 0.3 * Math.abs(velocity) / maxSpeed;
-  const squash = 0.3 * impactStrength * Math.max(0, 1 - impactDistance / 0.025);
+  const stretch = 1 + deform * (maxSpeed > 0 ? Math.abs(velocity) / maxSpeed : 0);
+  const squash = Math.min(0.9, deform * impactStrength * Math.max(0, 1 - impactDistance / 0.025));
   const scaleY = stretch * (1 - squash);
   return { y, scaleY, scaleX: 1 / scaleY, alpha: Math.min(1, progress / 0.08) };
 }
 
-/** 一度潰れて溜め、跳び上がってから重力で画面下へ落ちる。 */
-function sampleBounceOut(progress: number): Partial<MotionState> {
+/** 一度潰れて溜め、跳び上がってから重力で画面下へ落ちる。高さは落下距離の基準（既定320px）。 */
+function sampleBounceOut(progress: number, tuning?: MotionTuning): Partial<MotionState> {
+  const scale = tuningNumber(tuning, 'BounceHeight', 320) / 320;
+  const deform = Math.max(0, tuningNumber(tuning, 'BounceSquash', 0.3));
   const windUp = 0.18;
   if (progress < windUp) {
-    const scaleY = 1 - 0.22 * Math.sin((progress / windUp) * Math.PI / 2);
+    const scaleY = 1 - Math.min(0.9, deform * (0.22 / 0.3)) * Math.sin((progress / windUp) * Math.PI / 2);
     return { scaleY, scaleX: 1 / scaleY };
   }
-  // y(q) = 980q² - 560q: q≈0.29 で80px上の頂点、q=1 で420px下へ抜ける放物線。
+  // y(q) = 980q² - 560q: q≈0.29 で80px上の頂点、q=1 で420px下へ抜ける放物線（高さで拡縮）。
   const local = (progress - windUp) / (1 - windUp);
   const velocity = 1960 * local - 560;
-  const stretch = 1 + 0.3 * Math.abs(velocity) / 1400;
+  const stretch = 1 + deform * Math.abs(velocity) / 1400;
   return {
-    y: 980 * local * local - 560 * local,
+    y: (980 * local * local - 560 * local) * scale,
     scaleY: stretch,
     scaleX: 1 / stretch,
     alpha: 1 - applyEasing('easeInQuad', Math.max(0, (local - 0.55) / 0.45))
@@ -510,17 +573,45 @@ function sampleBounceOut(progress: number): Partial<MotionState> {
  * TURNSTILE: 入りは左端、出は右端を軸に90°未満で回る回転ドア。
  * Y軸回転を横幅の余弦と縦方向のスキューで近似する。
  */
-function sampleTurnstile(progress: number, context: MotionContext, direction: 'in' | 'out'): Partial<MotionState> {
-  const maxAngle = 80 * Math.PI / 180;
+function sampleTurnstile(
+  progress: number,
+  context: MotionContext,
+  direction: 'in' | 'out',
+  tuning?: MotionTuning
+): Partial<MotionState> {
+  const maxAngle = Math.min(89, Math.max(0, tuningNumber(tuning, 'TurnstileAngle', 80))) * Math.PI / 180;
+  const perspective = tuningNumber(tuning, 'TurnstilePerspective', 0.3);
   const halfWidth = (context.width ?? 240) / 2;
   const angle = maxAngle * (direction === 'in' ? 1 - progress : progress);
   const hingeShift = halfWidth * (1 - Math.cos(angle));
   return direction === 'in'
-    ? { x: -hingeShift, scaleX: Math.cos(angle), skewY: -Math.sin(angle) * 0.3, alpha: Math.min(1, progress * 2.5) }
-    : { x: hingeShift, scaleX: Math.cos(angle), skewY: Math.sin(angle) * 0.3, alpha: 1 - applyEasing('easeInQuad', progress) };
+    ? { x: -hingeShift, scaleX: Math.cos(angle), skewY: -Math.sin(angle) * perspective, alpha: Math.min(1, progress * 2.5) }
+    : { x: hingeShift, scaleX: Math.cos(angle), skewY: Math.sin(angle) * perspective, alpha: 1 - applyEasing('easeInQuad', progress) };
 }
 
-export function createScreenMotion(name: ScreenMotionName): MotionClip {
+function oppositeEdge(edge: string): string {
+  return ({ bottom: 'top', top: 'bottom', left: 'right', right: 'left' } as Record<string, string>)[edge] || 'top';
+}
+
+/** 指定した辺から amount（0〜1）の割合を隠すクリップ。 */
+function clipFromEdge(edge: string, amount: number): Partial<MotionState> {
+  switch (edge) {
+    case 'top': return { clipTop: amount };
+    case 'left': return { clipLeft: amount };
+    case 'right': return { clipRight: amount };
+    case 'bottom':
+    default: return { clipBottom: amount };
+  }
+}
+
+/** GENIE の変形。吸い込み方向と直交する幅（across）と、進行方向の長さ（along）を割り当てる。 */
+function genieShape(across: number, along: number, toward: { x: number; y: number }): Partial<MotionState> {
+  return toward.y !== 0
+    ? { scaleX: across, scaleY: along }
+    : { scaleX: along, scaleY: across };
+}
+
+export function createScreenMotion(name: ScreenMotionName, tuning: MotionTuning = {}): MotionClip {
   switch (name) {
     case 'cameraShake':
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
@@ -550,28 +641,36 @@ export function createScreenMotion(name: ScreenMotionName): MotionClip {
         scaleY: 1 + Math.sin(timeMs * Math.PI * 2 / 1800) * 0.012
       }));
     case 'whipPan':
-      // WHIP PAN: フレーズ冒頭420msで横に流れ込み、ぼけと傾きを残して減速着地する。
+      // WHIP PAN: フレーズ冒頭（既定420ms）で流れ込み、ぼけと傾きを残して減速着地する。
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
-        const progress = Math.min(1, timeMs / 420);
+        const progress = Math.min(1, timeMs / Math.max(1, tuningNumber(tuning, 'whipPanDurationMs', 420)));
         if (progress >= 1) return {};
         const remaining = 1 - applyEasing('easeOutQuart', progress);
+        // 来る側の辺から反対方向へ流れ込む。
+        const from = { right: { x: 1, y: 0 }, left: { x: -1, y: 0 }, top: { x: 0, y: -1 }, bottom: { x: 0, y: 1 } }[
+          tuningString(tuning, 'whipPanDirection', 'right') as 'right' | 'left' | 'top' | 'bottom'
+        ] || { x: 1, y: 0 };
+        const offset = tuningNumber(tuning, 'whipPanDistance', 1100) * remaining * Math.min(1, context.intensity);
+        const smear = remaining * remaining;
         return {
-          x: 1100 * remaining * Math.min(1, context.intensity),
-          skewX: -0.22 * remaining * remaining,
-          blur: 16 * remaining * remaining
+          x: from.x * offset,
+          y: from.y * offset,
+          skewX: from.x !== 0 ? -0.22 * from.x * smear : 0,
+          skewY: from.y !== 0 ? -0.22 * from.y * smear : 0,
+          blur: tuningNumber(tuning, 'whipPanBlur', 16) * smear
         };
       });
     case 'zoomDive':
-      // ZOOM DIVE: 3.2倍から指数的に引いて着地し、冒頭だけ暗転から立ち上がる。
+      // ZOOM DIVE: 既定は3.2倍から指数的に引いて着地し、冒頭だけ暗転から立ち上がる。
       return motion(Number.POSITIVE_INFINITY, timeMs => {
-        const progress = Math.min(1, timeMs / 300);
+        const progress = Math.min(1, timeMs / Math.max(1, tuningNumber(tuning, 'zoomDiveDurationMs', 300)));
         if (progress >= 1) return {};
-        const scale = Math.pow(3.2, 1 - applyEasing('easeOutCubic', progress));
+        const scale = Math.pow(Math.max(1, tuningNumber(tuning, 'zoomDiveStartScale', 3.2)), 1 - applyEasing('easeOutCubic', progress));
         return {
           scaleX: scale,
           scaleY: scale,
           alpha: Math.min(1, timeMs / 60),
-          blur: 10 * (1 - progress) * (1 - progress)
+          blur: tuningNumber(tuning, 'zoomDiveBlur', 10) * (1 - progress) * (1 - progress)
         };
       });
     case 'none':

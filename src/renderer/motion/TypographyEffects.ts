@@ -46,6 +46,11 @@ export interface TypographyEffectParams {
   impactOutlineEnabled: boolean;
   impactOutlineSpread: number;
   impactOutlineDuration: number;
+  impactOutlineThickness: number;
+  impactOutlineTrigger: 'word' | 'character';
+  emitterLineRate: number;
+  emitterLineWidth: number;
+  emitterInnerRadius: number;
 }
 
 export interface TypographyEffectContext {
@@ -56,6 +61,8 @@ export interface TypographyEffectContext {
   seed: number;
   index: number;
   intensity: number;
+  /** 各文字の歌唱開始時刻（文字ごとに発動する効果で使う）。 */
+  characterStartsMs?: number[];
 }
 
 const fragmentShader = `
@@ -548,17 +555,27 @@ export class TypographyEffects {
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
-    const elapsed = context.nowMs - context.startMs;
     const duration = Math.max(1, params.impactOutlineDuration);
-    if (!params.impactOutlineEnabled || elapsed < 0 || elapsed > duration) {
+    if (!params.impactOutlineEnabled) {
       clearByPrefix(container, 'outline-');
       return;
     }
+    if (params.impactOutlineTrigger === 'character') {
+      clearByPrefix(container, 'outline-0');
+      this.updateCharacterOutlines(container, visualSource, params, context, duration);
+      return;
+    }
+    clearByPrefix(container, 'outline-chars');
 
+    const elapsed = context.nowMs - context.startMs;
+    if (elapsed < 0 || elapsed > duration) {
+      clearByPrefix(container, 'outline-0');
+      return;
+    }
     const progress = elapsed / duration;
     const clone = ensureGroupClone(container, visualSource, `${EFFECT_PREFIX}outline-0`);
     clone.children.forEach(child => {
-      if (child instanceof PIXI.Text) child.style = this.getOutlineStyle(child.style as PIXI.TextStyle);
+      if (child instanceof PIXI.Text) child.style = this.getOutlineStyle(child.style as PIXI.TextStyle, params.impactOutlineThickness);
     });
     const offset = 2 + (params.impactOutlineSpread - 2) * smoothstep(Math.min(1, progress * 1.6)) * context.intensity;
     const halfHeight = Math.max(1, visualSource.height / 2);
@@ -566,23 +583,73 @@ export class TypographyEffects {
     clone.alpha = 0.8 * Math.pow(1 - progress, 2);
   }
 
-  private readonly outlineStyles = new WeakMap<PIXI.TextStyle, PIXI.TextStyle>();
+  /** 文字ごとの歌唱開始時刻で、その文字だけの輪郭を拡散させる。 */
+  private updateCharacterOutlines(
+    container: PIXI.Container,
+    visualSource: PIXI.Container,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext,
+    duration: number
+  ): void {
+    const characters = visualSource.children.filter((child): child is PIXI.Text => child instanceof PIXI.Text);
+    const starts = context.characterStartsMs || [];
+    const active = characters
+      .map((character, characterIndex) => ({ character, elapsed: context.nowMs - (starts[characterIndex] ?? context.startMs) }))
+      .filter(entry => entry.elapsed >= 0 && entry.elapsed <= duration);
+    if (active.length === 0) {
+      clearByPrefix(container, 'outline-chars');
+      return;
+    }
 
-  /** 塗りを抜いて本体色の線だけにした文字スタイル。元スタイル単位でキャッシュする。 */
-  private getOutlineStyle(style: PIXI.TextStyle): PIXI.TextStyle {
-    const cached = this.outlineStyles.get(style);
+    const name = `${EFFECT_PREFIX}outline-chars`;
+    let group = container.children.find(child => child.name === name) as PIXI.Container | undefined;
+    if (!group) {
+      group = new PIXI.Container();
+      group.name = name;
+      container.addChildAt(group, Math.max(0, container.getChildIndex(visualSource)));
+    }
+    active.forEach(({ character, elapsed }, slot) => {
+      let outline = group!.children[slot] as PIXI.Text | undefined;
+      if (!outline) {
+        outline = new PIXI.Text(character.text);
+        outline.anchor.set(character.anchor.x, character.anchor.y);
+        group!.addChild(outline);
+      }
+      outline.text = character.text;
+      outline.style = this.getOutlineStyle(character.style as PIXI.TextStyle, params.impactOutlineThickness);
+      const progress = elapsed / duration;
+      const offset = 2 + (params.impactOutlineSpread - 2) * smoothstep(Math.min(1, progress * 1.6)) * context.intensity;
+      const halfHeight = Math.max(1, character.height / 2);
+      outline.position.set(character.x, character.y);
+      outline.rotation = character.rotation;
+      outline.scale.set(character.scale.x * (1 + offset / halfHeight), character.scale.y * (1 + offset / halfHeight));
+      outline.alpha = 0.8 * Math.pow(1 - progress, 2);
+    });
+    group.children.slice(active.length).forEach(destroyDisplayObject);
+  }
+
+  private readonly outlineStyles = new WeakMap<PIXI.TextStyle, Map<number, PIXI.TextStyle>>();
+
+  /** 塗りを抜いて本体色の線だけにした文字スタイル。元スタイルと太さ単位でキャッシュする。 */
+  private getOutlineStyle(style: PIXI.TextStyle, thickness: number): PIXI.TextStyle {
+    let byThickness = this.outlineStyles.get(style);
+    if (!byThickness) {
+      byThickness = new Map();
+      this.outlineStyles.set(style, byThickness);
+    }
+    const cached = byThickness.get(thickness);
     if (cached) return cached;
     const outline = style.clone();
     outline.stroke = Array.isArray(style.fill) ? String(style.fill[0]) : String(style.fill);
-    outline.strokeThickness = Math.max(2, Number(style.fontSize) * 0.03);
+    outline.strokeThickness = Math.max(0.5, thickness);
     outline.fill = 'rgba(0,0,0,0)';
     outline.dropShadow = false;
-    this.outlineStyles.set(style, outline);
+    byThickness.set(thickness, outline);
     return outline;
   }
 
   /**
-   * SPEED LINES: 語を中心にした放射状の集中線。12fps相当で線の位置と長さを引き直し、
+   * SPEED LINES: 語を中心にした放射状の集中線。既定12fpsで線の位置と長さを引き直し、
    * 滑らかに補間しないことで打撃的な速度感を出す。
    */
   private drawSpeedLine(
@@ -594,12 +661,13 @@ export class TypographyEffects {
     count: number,
     elapsed: number
   ): void {
-    const frame = Math.floor(elapsed / 83);
+    const frame = Math.floor(elapsed / (1000 / Math.max(1, params.emitterLineRate)));
     const base = context.seed + context.index * 997 + lineIndex * 73 + frame * 389;
     const angle = (lineIndex / count) * TAU + deterministicNoise(base) * (Math.PI / count);
-    const inner = Math.max(source.width, source.height) * 0.55 + Math.abs(deterministicNoise(base + 11)) * 24;
+    const inner = Math.max(source.width, source.height) * params.emitterInnerRadius
+      + Math.abs(deterministicNoise(base + 11)) * 24;
     const length = params.emitterRadius * (0.4 + 0.6 * Math.abs(deterministicNoise(base + 13))) * context.intensity;
-    const thickness = 1.5 + Math.abs(deterministicNoise(base + 17)) * 3.5;
+    const thickness = params.emitterLineWidth * (0.3 + 0.7 * Math.abs(deterministicNoise(base + 17)));
     graphic.beginFill(0xffffff, 0.85);
     graphic.drawPolygon([inner, -thickness / 2, inner + length, 0, inner, thickness / 2]);
     graphic.endFill();

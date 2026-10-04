@@ -13,6 +13,8 @@ export interface ParamConfig {
   step?: number;
   label?: string;
   options?: string[] | Array<{ value: any, label: string }> | (() => string[]);
+  /** 現在の値からこの項目を表示するか判定する（未指定なら常に表示）。 */
+  visibleWhen?: (values: Record<string, any>) => boolean;
 }
 
 interface ParamEditorProps {
@@ -107,7 +109,7 @@ const ParamEditor: React.FC<ParamEditorProps> = ({
   return (
     <div className="param-editor">
       <div className="param-list">
-        {paramConfig.map(param => param.name === 'fontWeight' ? null : (
+        {paramConfig.map(param => param.name === 'fontWeight' || (param.visibleWhen && !param.visibleWhen(values)) ? null : (
           <div key={param.name} className="param-item">
             <div className="param-label">
               {param.label || param.name}

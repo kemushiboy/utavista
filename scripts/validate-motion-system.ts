@@ -10,6 +10,7 @@ import {
   tween
 } from '../src/renderer/motion/Motion';
 import { createEntrance, createExit, createSustain, normalizeMotionName, sceneCatalog } from '../src/renderer/motion/Scene';
+import { resolveTransitionTuning } from '../src/renderer/motion/MotionTuning';
 import { createShuffledText, destructionEnvelope } from '../src/renderer/motion/TypographyEffects';
 import { kineticSceneVariations } from '../src/renderer/data/kineticSceneVariations';
 import { KineticSceneTemplate } from '../src/renderer/templates/KineticSceneTemplate';
@@ -83,6 +84,41 @@ assert.equal(normalizeMotionName('characterBreak'), 'shatter');
 assert.equal(normalizeMotionName('hardStop'), 'instant');
 assert.equal(normalizeMotionName('multiply'), 'breathe');
 assert.deepEqual(createEntrance('characterBreak' as never, 500).sample(200, context), createEntrance('shatter', 500).sample(200, context));
+
+// モーション固有の調整値: 名前の重複がなく、選択中のモーションだけで表示され、値が動きに反映される。
+const kineticConfig = new KineticSceneTemplate().getParameterConfig();
+const configNames = kineticConfig.map(parameter => parameter.name);
+assert.equal(new Set(configNames).size, configNames.length, 'パラメータ名が重複しています');
+const configByName = new Map(kineticConfig.map(parameter => [parameter.name, parameter]));
+const bounceHeightIn = configByName.get('entranceBounceHeight');
+assert.ok(bounceHeightIn?.visibleWhen?.({ entranceMotion: 'bounce' }), '出現bounceの調整値が表示されません');
+assert.equal(bounceHeightIn?.visibleWhen?.({ entranceMotion: 'slam', exitMotion: 'bounce' }), false, '出現の調整値が消失の選択で表示されています');
+assert.ok(configByName.get('exitBounceHeight')?.visibleWhen?.({ exitMotion: 'bounce' }));
+assert.equal(configByName.has('exitBounceCount'), false, '消失で使わない弾む回数が定義されています');
+assert.ok(configByName.get('shuffleRate')?.visibleWhen?.({ shuffleEnabled: true }));
+assert.equal(configByName.get('shuffleRate')?.visibleWhen?.({ shuffleEnabled: false }), false, 'OFFのエフェクトの詳細が表示されています');
+assert.equal(configByName.get('emitterLineRate')?.visibleWhen?.({ emittersEnabled: true, emitterStyle: 'eyes' }), false);
+assert.ok(configByName.get('emitterLineRate')?.visibleWhen?.({ emittersEnabled: true, emitterStyle: 'speedLines' }));
+
+const lowBounce = createEntrance('bounce', 600, 'auto', resolveTransitionTuning({ entranceBounceHeight: 100 }, 'entrance', 'bounce'));
+assert.ok(Math.abs(lowBounce.sample(0, context).y + 100) < 1e-6, '落下の高さが反映されていません');
+assert.equal(
+  resolveTransitionTuning({ exitMaskScale: 'invalid' }, 'exit', 'mask').MaskScale, 1.12,
+  '不正な値のとき消失側の既定値に戻りません'
+);
+// 既定以外の調整値でも出現は基準状態へ戻る。
+([
+  ['mask', { entranceMaskDirection: 'left', entranceMaskScale: 2 }],
+  ['genie', { entranceGenieDirection: 'right', entranceGenieDistance: 500 }],
+  ['anticipate', { entranceAnticipateDirection: 'up', entranceAnticipateDistance: 600 }],
+  ['bounce', { entranceBounceCount: 0, entranceBounceSquash: 0.8 }],
+  ['spring', { entranceSpringDamping: 0.9, entranceSpringStartScale: 2 }]
+] as const).forEach(([name, params]) => {
+  const settled = createEntrance(name, 600, 'auto', resolveTransitionTuning(params, 'entrance', name)).sample(600, context);
+  assert.ok(Math.abs(settled.x) < 1e-3 && Math.abs(settled.y) < 1e-3, `${name}: 調整後に位置が戻りません`);
+  assert.ok(Math.abs(settled.scaleX - 1) < 1e-3 && Math.abs(settled.scaleY - 1) < 1e-3, `${name}: 調整後に拡大率が戻りません`);
+  assert.ok(Math.abs(settled.clipLeft) < 1e-3 && Math.abs(settled.clipRight) < 1e-3, `${name}: 調整後にマスクが開きません`);
+});
 
 const variationIds = kineticSceneVariations.map(variation => variation.id);
 assert.equal(new Set(variationIds).size, variationIds.length, '内蔵バリエーションのIDが重複しています');

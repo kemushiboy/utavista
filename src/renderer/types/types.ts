@@ -90,6 +90,8 @@ export type ParameterConfig = {
   step?: number;
   options?: string[] | (() => string[]);
   label?: string;
+  /** 現在の値からこの項目を表示するか判定する（未指定なら常に表示）。保存・適用には影響しない。 */
+  visibleWhen?: (values: Record<string, unknown>) => boolean;
 };
 
 export interface IAnimationTemplate {
