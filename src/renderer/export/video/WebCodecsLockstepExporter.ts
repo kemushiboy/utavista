@@ -70,6 +70,7 @@ export class WebCodecsLockstepExporter {
       width,
       height,
       audioPath: options.audioPath,
+      audioStartMs: startTime,
       outputPath: options.outputPath,
       totalFrames,
       totalDurationMs: (endTime - startTime)

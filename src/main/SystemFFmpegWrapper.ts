@@ -136,6 +136,8 @@ export class SystemFFmpegWrapper {
     width: number;
     height: number;
     audioPath?: string;
+    /** 書き出し範囲の開始時刻。音声もこの位置から切り出す。 */
+    audioStartMs?: number;
     outputPath?: string; // full path
     totalFrames?: number;
     totalDurationMs?: number;
@@ -155,7 +157,13 @@ export class SystemFFmpegWrapper {
       '-i', options.h264Path
     ];
 
-    const audioArgs = options.audioPath ? ['-i', options.audioPath, ...AAC_AUDIO_ARGS] : [];
+    const audioArgs = options.audioPath
+      ? [
+        ...(options.audioStartMs ? ['-ss', (options.audioStartMs / 1000).toFixed(3)] : []),
+        '-i', options.audioPath,
+        ...AAC_AUDIO_ARGS
+      ]
+      : [];
 
     // Re-encode with libx264 to embed explicit CFR/fps metadata (most compatible)
     const args = [

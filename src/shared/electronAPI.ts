@@ -78,6 +78,7 @@ export interface ElectronAPI {
     width: number;
     height: number;
     audioPath?: string;
+    audioStartMs?: number; // 書き出し範囲の開始時刻（音声の切り出し位置）
     outputPath?: string; // optional full path; otherwise default behavior
     totalFrames?: number;
     totalDurationMs?: number;

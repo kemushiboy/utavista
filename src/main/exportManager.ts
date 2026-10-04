@@ -349,6 +349,7 @@ export function setupExportHandlers() {
     width: number;
     height: number;
     audioPath?: string;
+    audioStartMs?: number;
     outputPath?: string;
   }) => {
     try {

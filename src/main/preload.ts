@@ -102,6 +102,7 @@ const electronAPI = {
     width: number;
     height: number;
     audioPath?: string;
+    audioStartMs?: number;
     outputPath?: string;
     totalFrames?: number;
     totalDurationMs?: number;
