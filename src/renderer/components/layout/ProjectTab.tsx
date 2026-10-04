@@ -6,6 +6,7 @@ import { ModernVideoExportOptions } from '../../export/video/VideoExporter';
 import { Button, Select, Input, Section, StatusMessage } from '../common';
 import './ProjectTab.css';
 import { WebCodecsLockstepExporter } from '../../export';
+import { findSupportedH264Config } from '../../export/video/H264EncoderConfig';
 import { createSrt } from '../../utils/SrtExporter';
 import { getProjectSaveSnapshot, subscribeProjectSaveStatus } from '../../services/ProjectSaveStatus';
 
@@ -152,27 +153,8 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
           return;
         }
 
-        const baseCfg: any = {
-          width,
-          height,
-          framerate: curFps,
-          hardwareAcceleration: 'prefer-hardware',
-          latencyMode: 'quality',
-          avc: { format: 'annexb' },
-        };
-        // Prefer High@L5.0 first, then try L4.0
-        const configsToTry: any[] = [
-          { ...baseCfg, codec: 'avc1.640032' }, // High@L5.0
-          { ...baseCfg, codec: 'avc1.640028' }, // High@L4.0
-        ];
-
-        let supported = false;
-        for (const cfg of configsToTry) {
-          try {
-            const result = await VE.isConfigSupported(cfg);
-            if (result?.supported) { supported = true; break; }
-          } catch (_) { /* try next */ }
-        }
+        // Same candidates as the exporter (hardware first, software fallback)
+        const supported = (await findSupportedH264Config(width, height, curFps)) !== null;
 
         if (cancelled) return;
         if (supported) {

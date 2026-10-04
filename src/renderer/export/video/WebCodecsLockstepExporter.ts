@@ -2,6 +2,7 @@
 
 import type { Engine } from '../../engine/Engine';
 import { getElectronAPI } from '../../../shared/electronAPI';
+import { findSupportedH264Config } from './H264EncoderConfig';
 
 export interface LockstepExportOptions {
   sessionId?: string;
@@ -95,36 +96,11 @@ export class WebCodecsLockstepExporter {
 
     try {
 
-    // Choose codec level based on resolution; fallback to higher level if needed
-    const baseConfig: any = {
-      width,
-      height,
-      framerate: fps,
-      hardwareAcceleration: 'prefer-hardware',
-      latencyMode: 'quality',
-      avc: { format: 'annexb' },
-    };
-
-    // Try Level 4.0 first; if not supported (e.g., 1920x1920), try Level 5.0
-    const configsToTry: any[] = [
-      { ...baseConfig, codec: 'avc1.640028' }, // High, Level 4.0
-      { ...baseConfig, codec: 'avc1.640032' }, // High, Level 5.0
-    ];
-
-    let configured = false;
-    for (const cfg of configsToTry) {
-      try {
-        const support = await (window as any).VideoEncoder.isConfigSupported(cfg);
-        if (support?.supported) {
-          encoder.configure(cfg);
-          configured = true;
-          break;
-        }
-      } catch (_) {
-        // try next config
-      }
-    }
-    if (!configured) {
+    // Hardware first (Level 4.0 → 5.0), then software fallback
+    const encoderConfig = await findSupportedH264Config(width, height, fps);
+    if (encoderConfig) {
+      encoder.configure(encoderConfig);
+    } else {
       // Provide a helpful error for common square resolutions like 1920x1920
       const coded = width * height;
       const hint = (coded > 2097152)
