@@ -291,7 +291,8 @@ export interface StageSize {
 }
 
 // 背景関連の型定義
-export type BackgroundType = 'color' | 'image' | 'video';
+/** transparent: 背景を描かずアルファ付きで描画する（透過動画の書き出し用）。 */
+export type BackgroundType = 'color' | 'image' | 'video' | 'transparent';
 export type BackgroundFitMode = 'cover' | 'contain' | 'stretch';
 
 export interface BackgroundConfig {

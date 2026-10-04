@@ -573,7 +573,15 @@ const ContentTab: React.FC<ContentTabProps> = ({ engine, onLyricsEditModeToggle 
           <option value="color">単色</option>
           <option value="image">画像</option>
           <option value="video">動画</option>
+          <option value="transparent">透過</option>
         </Select>
+
+        {backgroundType === 'transparent' && (
+          <p className="u-mt-md u-text-secondary">
+            背景を描かず、文字と装飾だけをアルファチャンネル付きで描画します。プレビューの市松模様は書き出されません。
+            動画出力は透過に対応した ProRes 4444（.mov）になります。
+          </p>
+        )}
 
         {backgroundType === 'color' && (
           <div className="u-mt-md">

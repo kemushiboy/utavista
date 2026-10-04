@@ -46,7 +46,27 @@ const electronAPI = {
   // Video export save dialog
   showSaveDialogForVideo: (defaultFileName: string): Promise<string | null> =>
     ipcRenderer.invoke('export:showSaveDialogForVideo', defaultFileName),
-  
+  showSaveDialogForAlphaVideo: (defaultFileName: string): Promise<string | null> =>
+    ipcRenderer.invoke('export:showSaveDialogForAlphaVideo', defaultFileName),
+
+  // 透過背景の書き出し（ProRes 4444）
+  alphaExportStart: (options: {
+    sessionId: string;
+    width: number;
+    height: number;
+    fps: number;
+    totalFrames: number;
+    outputPath: string;
+    audioPath?: string;
+    audioStartMs?: number;
+  }): Promise<void> => ipcRenderer.invoke('export:alpha:start', options),
+  alphaExportFrame: (payload: { sessionId: string; data: Uint8Array }): Promise<void> =>
+    ipcRenderer.invoke('export:alpha:frame', payload),
+  alphaExportFinalize: (options: { sessionId: string }): Promise<string> =>
+    ipcRenderer.invoke('export:alpha:finalize', options),
+  alphaExportCancel: (options: { sessionId: string }): Promise<void> =>
+    ipcRenderer.invoke('export:alpha:cancel', options),
+
   // Seek and Snap Video Export (new)
   createTempSession: (sessionId: string): Promise<string> =>
     ipcRenderer.invoke('export:createTempSession', sessionId),

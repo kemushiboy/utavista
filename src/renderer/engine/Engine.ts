@@ -223,9 +223,13 @@ export class Engine {
       width: width,
       height: height,
       backgroundColor: 0x000000,
+      // WebGLコンテキストのalpha有無は生成時のbackgroundAlphaで決まる。
+      // 透過背景へ切り替えられるようalpha付きで生成し、直後に不透明へ戻す。
+      backgroundAlpha: 0,
       resolution: 1, // 常に1で固定（スケーリングはCSSで行う）
       antialias: true,
     });
+    this.app.renderer.background.alpha = 1;
 
     // PIXIアプリケーションの初期化完了を待つ
     if (this.app.init) {
@@ -2903,6 +2907,23 @@ export class Engine {
     delete this.backgroundConfig.imageFilePath;
     delete this.backgroundConfig.videoFilePath;
     this.backgroundVideoFileName = null;
+    this.applyBackgroundTransparency();
+  }
+
+  /** 透過背景かどうかをレンダラーの背景alphaとプレビューの市松模様へ反映する。 */
+  private applyBackgroundTransparency(): void {
+    const transparent = this.backgroundConfig.type === 'transparent';
+    if (this.app?.renderer) {
+      this.app.renderer.background.alpha = transparent ? 0 : 1;
+    }
+    this.canvasContainer?.classList.toggle('transparent-background', transparent);
+    window.dispatchEvent(new CustomEvent('utavista:background-transparency-changed', {
+      detail: { transparent }
+    }));
+  }
+
+  isBackgroundTransparent(): boolean {
+    return this.backgroundConfig.type === 'transparent';
   }
   
   /**
@@ -2960,6 +2981,14 @@ export class Engine {
     
     // 背景タイプが変更された場合、既存の背景メディアをクリア
     if (config.type && config.type !== previousType) {
+      if (config.type === 'transparent') {
+        // 背景メディアを外し、レンダラーの背景を透明にする。
+        this.clearBackgroundMedia();
+        this.backgroundConfig.type = 'transparent';
+        this.applyBackgroundTransparency();
+      } else if (previousType === 'transparent') {
+        this.applyBackgroundTransparency();
+      }
       if (config.type === 'color') {
         // 単色に変更された場合、動画や画像をクリア
         this.clearBackgroundMedia();

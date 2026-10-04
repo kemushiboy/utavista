@@ -141,10 +141,17 @@ void main(void) {
   uv.x += warpDirection * warpMagnitude * horizontalWarpStrength * 0.0325;
 
   float rgbOffset = (uChromatic + uGlitch * 0.35) * master * 0.012;
-  float red = texture2D(uSampler, uv + vec2(rgbOffset, 0.0)).r;
+  // 入力はプリマルチプライ済み。透過背景でも色調整が透明部分へ色を足さないよう、
+  // 非プリマルチプライに戻して処理し、最後にalphaを掛け直す（不透明背景ではalpha=1で従来と同じ）。
+  vec4 redSample = texture2D(uSampler, uv + vec2(rgbOffset, 0.0));
   vec4 centerColor = texture2D(uSampler, uv);
-  float blue = texture2D(uSampler, uv - vec2(rgbOffset, 0.0)).b;
-  vec3 color = vec3(red, centerColor.g, blue);
+  vec4 blueSample = texture2D(uSampler, uv - vec2(rgbOffset, 0.0));
+  float alpha = max(centerColor.a, max(redSample.a, blueSample.a));
+  vec3 color = vec3(
+    redSample.a > 0.0 ? redSample.r / redSample.a : 0.0,
+    centerColor.a > 0.0 ? centerColor.g / centerColor.a : 0.0,
+    blueSample.a > 0.0 ? blueSample.b / blueSample.a : 0.0
+  );
 
   float luminance = dot(color, vec3(0.299, 0.587, 0.114));
   color = mix(vec3(luminance), color, uSaturation);
@@ -159,7 +166,7 @@ void main(void) {
   float edge = smoothstep(0.34, 0.82, length((vTextureCoord - 0.5) * vec2(1.0, 0.78)));
   color *= 1.0 - edge * uVignette * master * 0.86;
   float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-  gl_FragColor = vec4(clamp(color, 0.0, 1.0), centerColor.a * inside);
+  gl_FragColor = vec4(clamp(color, 0.0, 1.0) * alpha, alpha * inside);
 }
 `;
 

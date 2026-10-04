@@ -24,6 +24,22 @@ export interface ElectronAPI {
   
   // Video export save dialog
   showSaveDialogForVideo(defaultFileName: string): Promise<string | null>;
+  showSaveDialogForAlphaVideo(defaultFileName: string): Promise<string | null>;
+
+  // 透過背景の書き出し（ProRes 4444）。dataは幅×高さ×4のRGBA（非プリマルチプライ）
+  alphaExportStart(options: {
+    sessionId: string;
+    width: number;
+    height: number;
+    fps: number;
+    totalFrames: number;
+    outputPath: string;
+    audioPath?: string;
+    audioStartMs?: number;
+  }): Promise<void>;
+  alphaExportFrame(payload: { sessionId: string; data: Uint8Array }): Promise<void>;
+  alphaExportFinalize(options: { sessionId: string }): Promise<string>;
+  alphaExportCancel(options: { sessionId: string }): Promise<void>;
   
   // Video metadata
   getVideoMetadata(videoPath: string): Promise<{

@@ -6,6 +6,7 @@ import { ModernVideoExportOptions } from '../../export/video/VideoExporter';
 import { Button, Select, Input, Section, StatusMessage } from '../common';
 import './ProjectTab.css';
 import { WebCodecsLockstepExporter } from '../../export';
+import { TransparentVideoExporter } from '../../export/video/TransparentVideoExporter';
 import { findSupportedH264Config } from '../../export/video/H264EncoderConfig';
 import { createSrt } from '../../utils/SrtExporter';
 import { getProjectSaveSnapshot, subscribeProjectSaveStatus } from '../../services/ProjectSaveStatus';
@@ -58,7 +59,18 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   const [pngStatus, setPngStatus] = useState('');
   const [pngStatusType, setPngStatusType] = useState<'success' | 'error' | 'info'>('info');
   // ロックステップエクスポーター参照（キャンセル対応）
-  const exporterRef = useRef<WebCodecsLockstepExporter | null>(null);
+  const exporterRef = useRef<WebCodecsLockstepExporter | TransparentVideoExporter | null>(null);
+  // 背景が透過のときは ProRes 4444（.mov）で書き出す。
+  const [isTransparentBackground, setIsTransparentBackground] = useState<boolean>(
+    () => engine?.isBackgroundTransparent?.() ?? false
+  );
+  useEffect(() => {
+    const handleTransparencyChange = (event: Event) => {
+      setIsTransparentBackground(Boolean((event as CustomEvent<{ transparent: boolean }>).detail?.transparent));
+    };
+    window.addEventListener('utavista:background-transparency-changed', handleTransparencyChange);
+    return () => window.removeEventListener('utavista:background-transparency-changed', handleTransparencyChange);
+  }, []);
   // WebCodecsサポート状況（現在の設定に対する）
   const [webcodecsUnsupportedMsg, setWebcodecsUnsupportedMsg] = useState<string | null>(null);
   
@@ -313,9 +325,68 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   }, [showStatus]);
 
 
-  // 実際のエクスポート処理（ロックステップに一本化）
+  // 実際のエクスポート処理（透過背景はProRes 4444、それ以外はロックステップ）
   const handleExport = async () => {
-    await handleLockstepExport();
+    if (engine.isBackgroundTransparent()) {
+      await handleTransparentExport();
+    } else {
+      await handleLockstepExport();
+    }
+  };
+
+  // 透過背景の書き出し（ProRes 4444 / .mov）
+  const handleTransparentExport = async () => {
+    const electronAPI = (window as any).electronAPI;
+    if (!electronAPI?.alphaExportStart) {
+      setExportError('透過書き出し機能がアプリに反映されていません。Electronアプリを完全に終了して再起動してください。');
+      return;
+    }
+
+    try {
+      const defaultFileName = `transparent_export_${new Date().toISOString().replace(/[:.]/g, '-')}.mov`;
+      const filePath = await electronAPI.showSaveDialogForAlphaVideo(defaultFileName);
+      if (!filePath) return; // キャンセル
+
+      setIsExporting(true);
+      setProgress(0);
+      setExportError(null);
+
+      const exporter = new TransparentVideoExporter(engine);
+      exporterRef.current = exporter;
+      const resolution = getCurrentResolution();
+      let audioPath: string | undefined = undefined;
+      if (includeMusicTrack) {
+        try {
+          const { electronMediaManager } = await import('../../services/ElectronMediaManager');
+          audioPath = electronMediaManager.getCurrentAudioFilePath() || undefined;
+        } catch {}
+      }
+
+      const outPath = await exporter.start({
+        fps,
+        width: resolution.width,
+        height: resolution.height,
+        startTime: useCustomRange ? startTime : 0,
+        endTime: useCustomRange ? endTime : engine.getMaxTime(),
+        audioPath,
+        outputPath: filePath
+      }, p => {
+        setProgress(Math.round(p.overall * 100));
+        setStepIndex(p.step);
+        setStepCount(p.steps);
+        setStepName(p.stepName);
+        setEtaSeconds(p.etaSeconds ?? null);
+      });
+
+      showStatus(`透過動画（ProRes 4444）を出力しました: ${outPath}`, 'success');
+    } catch (error) {
+      console.error('Transparent export failed:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== 'Export cancelled') setExportError(message);
+    } finally {
+      setIsExporting(false);
+      exporterRef.current = null;
+    }
   };
 
   // ロックステップ（WebCodecs）高速エクスポート（プロジェクトタブ版・デバッグUI）
@@ -711,10 +782,18 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
             ))}
           </Select>
 
+          {isTransparentBackground && (
+            <div className="export-info-note u-mb-sm">
+              背景が「透過」のため、アルファチャンネル付きの ProRes 4444（.mov）で出力します。
+              音声は非圧縮PCM（24bit・48kHz）で格納され、動画品質（CRF）の設定は使いません。ファイルサイズは大きくなります。
+            </div>
+          )}
+
           {/* 品質設定（CRF） */}
-          <Select 
+          <Select
             label="動画品質 (CRF値):"
-            value={videoQuality} 
+            value={videoQuality}
+            disabled={isTransparentBackground}
             onChange={(e) => setVideoQuality(e.target.value as VideoQualityCRF)}
           >
             {videoQualityOptions.map(option => (
@@ -831,18 +910,18 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
 
           {/* エクスポートボタン（進捗の下に配置） */}
           <div className="u-mt-lg">
-            {!isExporting && webcodecsUnsupportedMsg && (
+            {!isExporting && !isTransparentBackground && webcodecsUnsupportedMsg && (
               <div className="export-warning u-mb-sm">{webcodecsUnsupportedMsg}</div>
             )}
             {!isExporting ? (
-              <Button 
+              <Button
                 variant="primary"
                 size="large"
                 fullWidth
                 onClick={handleExport}
-                disabled={!!webcodecsUnsupportedMsg}
+                disabled={!isTransparentBackground && !!webcodecsUnsupportedMsg}
               >
-                動画を出力
+                {isTransparentBackground ? '透過動画を出力（ProRes 4444）' : '動画を出力'}
               </Button>
             ) : (
               <Button 

@@ -172,6 +172,15 @@
 }
 
 /* Warning above export button for unsupported WebCodecs configuration */
+.export-info-note {
+  background-color: rgba(33, 150, 243, 0.1);
+  border: 1px solid rgba(33, 150, 243, 0.6);
+  border-radius: var(--radius-small);
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text-secondary, #b0bec5);
+  font-size: 0.9em;
+}
+
 .export-warning {
   background-color: rgba(255, 193, 7, 0.12);
   border: 1px solid #ffc107;
