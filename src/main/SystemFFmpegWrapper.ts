@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { promises as fs } from 'fs';
 import * as fsSync from 'fs';
+import { resolveFFmpegBinary } from './ffmpegPath';
 
 export interface BatchVideoOptions {
   sessionId: string;
@@ -67,18 +68,7 @@ export class SystemFFmpegWrapper {
    * システムFFmpegパスの取得
    */
   private getFFmpegPath(): string {
-    const platform = process.platform;
-    
-    // 開発環境ではシステムFFmpegを使用
-    // プロダクション環境では同梱FFmpegを使用予定
-    if (platform === 'win32') {
-      return 'ffmpeg.exe';
-    } else if (platform === 'darwin') {
-      // macOS: Homebrewまたはシステムインストール
-      return '/opt/homebrew/bin/ffmpeg'; // M1/M2 Mac
-    } else {
-      return 'ffmpeg';
-    }
+    return resolveFFmpegBinary('ffmpeg');
   }
 
   /**
@@ -747,7 +737,7 @@ OutputDir: ${outputDir}
     frameCount: number;
   }> {
     return new Promise((resolve, reject) => {
-      const ffprobePath = this.ffmpegPath.replace('ffmpeg', 'ffprobe');
+      const ffprobePath = resolveFFmpegBinary('ffprobe');
       const args = [
         '-v', 'quiet',
         '-print_format', 'json',
@@ -878,7 +868,7 @@ OutputDir: ${outputDir}
     height: number;
   }> {
     return new Promise((resolve, reject) => {
-      const ffprobePath = this.ffmpegPath.replace('ffmpeg', 'ffprobe');
+      const ffprobePath = resolveFFmpegBinary('ffprobe');
       const args = [
         '-v', 'quiet',
         '-select_streams', 'v:0',
@@ -1147,7 +1137,7 @@ OutputDir: ${outputDir}
     height: number;
   }> {
     return new Promise((resolve, reject) => {
-      const ffprobePath = this.ffmpegPath.replace('ffmpeg', 'ffprobe');
+      const ffprobePath = resolveFFmpegBinary('ffprobe');
       const args = [
         '-v', 'quiet',
         '-print_format', 'json',

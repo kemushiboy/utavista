@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as fsSync from 'fs';
 import type { ExportOptions, ExportProgress, ExportError } from '../shared/types';
 import { BatchVideoProcessor } from './BatchVideoProcessor';
+import { resolveFFmpegBinary } from './ffmpegPath';
 
 export class ExportManager {
   private ffmpegPath: string;
@@ -43,15 +44,7 @@ export class ExportManager {
   }
   
   private getFFmpegPath(): string {
-    // For development, use system ffmpeg
-    // In production, this would be bundled with the app
-    const platform = process.platform;
-    
-    if (platform === 'win32') {
-      return 'ffmpeg.exe';
-    } else {
-      return 'ffmpeg';
-    }
+    return resolveFFmpegBinary('ffmpeg');
   }
   
   async startExport(options: ExportOptions): Promise<void> {

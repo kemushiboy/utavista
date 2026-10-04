@@ -126,6 +126,14 @@ npm install
 npm run build
 ```
 
+### FFmpeg について
+
+動画書き出しには FFmpeg / FFprobe を使用します。別途インストールする必要はありません。
+
+- 開発時（`npm run electron`）は devDependencies の `ffmpeg-static` / `ffprobe-static` を使用します。
+- パッケージ時（`npm run package`）は `scripts/bundle-ffmpeg.cjs` が対象 OS・アーキテクチャ用のバイナリをアプリの `Resources/ffmpeg/` に同梱します。ビルド環境と異なる組み合わせの ffmpeg は初回のみダウンロードされます。
+- 環境変数 `UTAVISTA_FFMPEG_PATH` / `UTAVISTA_FFPROBE_PATH` で任意の実行ファイルを指定できます。
+
 ## 起動方法
 
 ### 開発モードでの起動
@@ -335,6 +343,10 @@ UTAVISTAは以下のデュアルライセンス構造を採用しています：
 - このソフトウェアを自由に使用、研究、共有、改変することができます
 - 改変版を配布する場合は、同じGPL-3.0ライセンスを適用する必要があります
 - 商用利用も可能ですが、ソースコードの開示が必要です
+
+### 同梱する FFmpeg について
+
+パッケージ版には GPL でライセンスされた FFmpeg / FFprobe のビルド（[ffmpeg-static](https://github.com/eugeneware/ffmpeg-static)、[ffprobe-static](https://github.com/joshwnj/ffprobe-static) 経由）を同梱しています。ライセンスとビルド元・ソース入手先の情報はアプリ内の `Resources/ffmpeg/` に含まれています。FFmpeg のソースコードは https://ffmpeg.org/download.html から入手できます。
 
 ### CC-BY-4.0 テンプレートについて
 

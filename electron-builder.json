@@ -4,6 +4,7 @@
   "directories": {
     "output": "dist-electron"
   },
+  "afterPack": "scripts/bundle-ffmpeg.cjs",
   "files": [
     "dist/main/**/*",
     "dist/renderer/**/*",
