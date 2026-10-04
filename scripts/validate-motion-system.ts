@@ -9,7 +9,7 @@ import {
   sequence,
   tween
 } from '../src/renderer/motion/Motion';
-import { createEntrance, createExit, createSustain } from '../src/renderer/motion/Scene';
+import { createEntrance, createExit, createSustain, normalizeMotionName, sceneCatalog } from '../src/renderer/motion/Scene';
 import { createShuffledText, destructionEnvelope } from '../src/renderer/motion/TypographyEffects';
 import { kineticSceneVariations } from '../src/renderer/data/kineticSceneVariations';
 import { KineticSceneTemplate } from '../src/renderer/templates/KineticSceneTemplate';
@@ -64,7 +64,28 @@ assert.equal(destructionEnvelope(0, 900), 0);
 assert.ok(destructionEnvelope(450, 900) > 0.99);
 assert.ok(Math.abs(destructionEnvelope(900, 900)) < 1e-10);
 
-assert.equal(kineticSceneVariations.length, 12);
+// 全出現モーションは完了時に基準状態へ戻り、評価順序に依存しない。
+sceneCatalog.entrances.forEach(name => {
+  const entrance = createEntrance(name, 600);
+  const settled = entrance.sample(entrance.duration, { ...context, width: 320 });
+  const near = (value: number, expected: number) => Math.abs(value - expected) < 1e-3;
+  assert.ok(near(settled.x, 0) && near(settled.y, 0), `${name}: 出現完了時に位置が戻っていません`);
+  assert.ok(near(settled.scaleX, 1) && near(settled.scaleY, 1), `${name}: 出現完了時に拡大率が戻っていません`);
+  assert.ok(near(settled.alpha, 1) && near(settled.blur, 0), `${name}: 出現完了時に表示が戻っていません`);
+  assert.ok(near(settled.clipTop, 0) && near(settled.clipBottom, 0), `${name}: 出現完了時にマスクが開いていません`);
+  const exit = createExit(name, 600);
+  assert.deepEqual(exit.sample(270, context), (exit.sample(500, context), exit.sample(270, context)), `${name}: 消失が評価順序に依存しています`);
+});
+assert.deepEqual(sceneCatalog.entrances, sceneCatalog.exits, '出現と消失のモーション一覧が一致していません');
+
+// 統合済みの旧モーション名は新しい名前へ読み替える。
+assert.equal(normalizeMotionName('characterBreak'), 'shatter');
+assert.equal(normalizeMotionName('hardStop'), 'instant');
+assert.equal(normalizeMotionName('multiply'), 'breathe');
+assert.deepEqual(createEntrance('characterBreak' as never, 500).sample(200, context), createEntrance('shatter', 500).sample(200, context));
+
+const variationIds = kineticSceneVariations.map(variation => variation.id);
+assert.equal(new Set(variationIds).size, variationIds.length, '内蔵バリエーションのIDが重複しています');
 const kineticParameterNames = new Set(new KineticSceneTemplate().getParameterConfig().map(parameter => parameter.name));
 assert.equal(kineticParameterNames.has('tailTime'), false, '廃止済みのtailTimeがUI設定に残っています');
 kineticSceneVariations.forEach(variation => {
@@ -72,6 +93,14 @@ kineticSceneVariations.forEach(variation => {
   Object.keys(variation.params).forEach(parameterName => {
     assert.ok(kineticParameterNames.has(parameterName), `${variation.name}: 未定義パラメータ ${parameterName}`);
   });
+  (['entranceMotion', 'exitMotion'] as const).forEach(parameterName => {
+    const value = variation.params[parameterName];
+    if (value !== undefined) assert.ok(sceneCatalog.entrances.includes(value as never), `${variation.name}: 未登録の${parameterName} ${String(value)}`);
+  });
+  const sustain = variation.params.sustainMotion;
+  if (sustain !== undefined) assert.ok(sceneCatalog.sustains.includes(sustain as never), `${variation.name}: 未登録のsustainMotion ${String(sustain)}`);
+  const screen = variation.params.screenMotion;
+  if (screen !== undefined) assert.ok(sceneCatalog.screens.includes(screen as never), `${variation.name}: 未登録のscreenMotion ${String(screen)}`);
 });
 
 const parameterManager = new ParameterManagerV2();
@@ -82,12 +111,16 @@ parameterManager.importCompressed({
     phrase_legacy: {
       templateId: '',
       individualSettingEnabled: true,
-      parameterDiff: { tailTime: 1200, exitDuration: 640 }
+      parameterDiff: { tailTime: 1200, exitDuration: 640, entranceMotion: 'characterBreak', exitMotion: 'hardStop', sustainMotion: 'multiply' } as any
     }
   }
 });
 assert.equal('tailTime' in parameterManager.getGlobalDefaults(), false, '旧globalDefaultsのtailTimeが残っています');
 assert.equal('tailTime' in parameterManager.getParameters('phrase_legacy'), false, '旧個別設定のtailTimeが残っています');
 assert.equal(parameterManager.getParameters('phrase_legacy').exitDuration, 640);
+const legacyMotions = parameterManager.getParameters('phrase_legacy') as Record<string, unknown>;
+assert.equal(legacyMotions.entranceMotion, 'shatter', '旧出現名が移行されていません');
+assert.equal(legacyMotions.exitMotion, 'instant', '旧消失名が移行されていません');
+assert.equal(legacyMotions.sustainMotion, 'breathe', '旧継続名が移行されていません');
 
 console.log('Motion system validation passed.');

@@ -12,11 +12,36 @@ import {
 } from './Motion';
 
 export type LayoutName = 'center' | 'random' | 'circle' | 'vertical' | 'fill';
-export type EntranceName = 'slam' | 'slide' | 'scale' | 'collapse' | 'fall' | 'characterBreak' | 'noise' | 'instant';
-export type SustainName = 'still' | 'shake' | 'pulse' | 'glitch' | 'multiply' | 'compress';
-export type ExitName = 'slam' | 'slide' | 'scale' | 'collapse' | 'fall' | 'shatter' | 'noise' | 'hardStop';
-export type ScreenMotionName = 'none' | 'cameraShake' | 'zoom' | 'rgbDrift' | 'afterimage';
+/** 出現・消失の両方向で共通に選べる動き。 */
+export type TransitionName =
+  | 'slam' | 'slide' | 'scale' | 'collapse' | 'fall' | 'shatter' | 'noise' | 'instant'
+  | 'soft' | 'anticipate' | 'spring' | 'bounce' | 'turnstile' | 'mask' | 'genie';
+export type EntranceName = TransitionName;
+export type ExitName = TransitionName;
+export type SustainName = 'still' | 'shake' | 'pulse' | 'breathe' | 'glitch' | 'compress';
+export type ScreenMotionName = 'none' | 'cameraShake' | 'zoom' | 'rgbDrift' | 'afterimage' | 'whipPan' | 'zoomDive';
 export type EasingSelection = EasingName | 'auto';
+
+const transitionNames: TransitionName[] = [
+  'slam', 'slide', 'scale', 'collapse', 'fall', 'shatter', 'noise', 'instant',
+  'soft', 'anticipate', 'spring', 'bounce', 'turnstile', 'mask', 'genie'
+];
+
+/**
+ * 統合・廃止した旧モーション名。保存済みプロジェクトやプリセットの値を読み替える。
+ * - characterBreak（出現）と shatter（消失）は同じ飛散の往復なので shatter に統一
+ * - hardStop（消失）と instant（出現）は同じ即時切替なので instant に統一
+ * - multiply（継続）は pulse とほぼ同じ拡大縮小だったため breathe に置換
+ */
+const legacyMotionAliases: Record<string, string> = {
+  characterBreak: 'shatter',
+  hardStop: 'instant',
+  multiply: 'breathe'
+};
+
+export function normalizeMotionName(name: string): string {
+  return legacyMotionAliases[name] ?? name;
+}
 
 export interface SceneDefinition {
   layout: LayoutName;
@@ -42,10 +67,10 @@ export interface LayoutResult {
 
 export const sceneCatalog = {
   layouts: ['center', 'random', 'circle', 'vertical', 'fill'] as LayoutName[],
-  entrances: ['slam', 'slide', 'scale', 'collapse', 'fall', 'characterBreak', 'noise', 'instant'] as EntranceName[],
-  sustains: ['still', 'shake', 'pulse', 'glitch', 'multiply', 'compress'] as SustainName[],
-  exits: ['slam', 'slide', 'scale', 'collapse', 'fall', 'shatter', 'noise', 'hardStop'] as ExitName[],
-  screens: ['none', 'cameraShake', 'zoom', 'rgbDrift', 'afterimage'] as ScreenMotionName[],
+  entrances: transitionNames,
+  sustains: ['still', 'shake', 'pulse', 'breathe', 'glitch', 'compress'] as SustainName[],
+  exits: transitionNames,
+  screens: ['none', 'cameraShake', 'zoom', 'rgbDrift', 'afterimage', 'whipPan', 'zoomDive'] as ScreenMotionName[],
   easings: [
     'auto', 'linear', 'easeInQuad', 'easeOutQuad', 'easeInCubic', 'easeOutCubic',
     'easeInOutCubic', 'easeInQuart', 'easeOutQuart', 'easeOutQuint',
@@ -96,9 +121,51 @@ export function createEntrance(
   easing: EasingSelection = 'auto'
 ): MotionClip {
   const resolvedEasing: EasingName = easing === 'auto'
-    ? (name === 'slam' || name === 'scale' ? 'easeOutBack' : 'easeOutCubic')
+    ? autoEntranceEasing(name)
     : easing;
-  switch (name) {
+  const sampleProgress = (timeMs: number): number =>
+    applyEasing(resolvedEasing, timeMs / Math.max(1, duration));
+  switch (normalizeMotionName(name) as EntranceName) {
+    case 'soft':
+      // SOFT ENTER: 下から短く持ち上がり、ぼけた輪郭が澄む。
+      return motion(duration, timeMs => {
+        const eased = sampleProgress(timeMs);
+        return { y: 24 * (1 - eased), blur: 7 * (1 - eased), alpha: eased };
+      });
+    case 'anticipate':
+      return motion(duration, timeMs => sampleAnticipation(sampleProgress(timeMs), 'in'));
+    case 'spring':
+      // SPRING / SECOND ORDER: 減衰比0.42のばね応答で、行き過ぎを数回残して静止する。
+      return motion(duration, timeMs => {
+        const progress = sampleProgress(timeMs);
+        const scale = sampleDampedSpring(progress);
+        return { scaleX: scale, scaleY: scale, alpha: Math.min(1, progress * 4) };
+      });
+    case 'bounce':
+      return motion(duration, timeMs => sampleBounceIn(sampleProgress(timeMs)));
+    case 'turnstile':
+      return motion(duration, (timeMs, context) => sampleTurnstile(sampleProgress(timeMs), context, 'in'));
+    case 'mask':
+      // MASKING: マスクが下から開き、中身は別の速度で 1.35→1 に縮んで段差を作る。
+      return motion(duration, timeMs => {
+        const progress = Math.min(1, timeMs / Math.max(1, duration));
+        const content = applyEasing('easeOutCubic', progress);
+        const scale = 1.35 - 0.35 * content;
+        return { clipTop: 1 - sampleProgress(timeMs), y: 24 * (1 - content), scaleX: scale, scaleY: scale };
+      });
+    case 'genie':
+      // GENIE の復帰側: 受け口から減速しながら横幅を遅れて広げる。
+      return motion(duration, timeMs => {
+        const progress = Math.min(1, timeMs / Math.max(1, duration));
+        const eased = sampleProgress(timeMs);
+        const widthProgress = applyEasing(resolvedEasing, Math.max(0, (progress - 0.12) / 0.88));
+        return {
+          y: 260 * (1 - eased),
+          scaleX: 0.04 + 0.96 * widthProgress,
+          scaleY: 0.2 + 0.8 * eased,
+          alpha: Math.min(1, progress * 5)
+        };
+      });
     case 'slam':
       return parallel(
         tween(duration, { scaleX: 3.2, scaleY: 3.2 }, { scaleX: 1, scaleY: 1 }, resolvedEasing),
@@ -116,7 +183,7 @@ export function createEntrance(
       return motion(duration, (timeMs, context) => ({
         alpha: sampleNoiseFade(timeMs, duration, resolvedEasing, context, 'in')
       }));
-    case 'characterBreak':
+    case 'shatter':
       return motion(duration, (timeMs, context) => {
         const progress = Math.min(1, timeMs / Math.max(1, duration));
         const eased = applyEasing(resolvedEasing, progress);
@@ -156,11 +223,17 @@ export function createSustain(name: SustainName): MotionClip {
           alpha: 0.72 + Math.abs(deterministicNoise(context.seed + frame * 31)) * 0.28
         } : {};
       });
-    case 'multiply':
+    case 'breathe':
+      // BREATHE: 吸う2.6s・止める0.6s・吐く2.4sの非対称な周期で、pulseより遅く大きく呼吸する。
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
-        const wave = Math.max(0, Math.sin(timeMs * Math.PI * 2 / 900));
-        const scale = 1 + wave * 0.12 * context.intensity;
-        return { scaleX: scale, scaleY: scale, alpha: 1 - wave * 0.08 };
+        const phase = timeMs % 5600;
+        const inhale = phase < 2600
+          ? applyEasing('easeInOutSine', phase / 2600)
+          : phase < 3200
+            ? 1
+            : 1 - applyEasing('easeInOutSine', (phase - 3200) / 2400);
+        const scale = 1 + inhale * 0.08 * context.intensity;
+        return { scaleX: scale, scaleY: scale, alpha: 0.86 + inhale * 0.14 };
       });
     case 'compress':
       return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
@@ -202,9 +275,50 @@ export function createExit(
   easing: EasingSelection = 'auto'
 ): MotionClip {
   const resolvedEasing: EasingName = easing === 'auto'
-    ? (name === 'fall' ? 'easeInQuad' : 'easeInCubic')
+    ? autoExitEasing(name)
     : easing;
-  switch (name) {
+  const sampleProgress = (timeMs: number): number =>
+    applyEasing(resolvedEasing, timeMs / Math.max(1, duration));
+  switch (normalizeMotionName(name) as ExitName) {
+    case 'soft':
+      // SOFT ENTER の逆: 上へ抜けながら輪郭をぼかして薄れる。
+      return motion(duration, timeMs => {
+        const eased = sampleProgress(timeMs);
+        return { y: -24 * eased, blur: 7 * eased, alpha: 1 - eased };
+      });
+    case 'anticipate':
+      return motion(duration, timeMs => sampleAnticipation(sampleProgress(timeMs), 'out'));
+    case 'spring':
+      // 入りのばね応答を時間反転し、揺れてから一気に縮む。
+      return motion(duration, timeMs => {
+        const progress = sampleProgress(timeMs);
+        const scale = sampleDampedSpring(1 - progress);
+        return { scaleX: scale, scaleY: scale, alpha: Math.min(1, (1 - progress) * 4) };
+      });
+    case 'bounce':
+      return motion(duration, timeMs => sampleBounceOut(sampleProgress(timeMs)));
+    case 'turnstile':
+      return motion(duration, (timeMs, context) => sampleTurnstile(sampleProgress(timeMs), context, 'out'));
+    case 'mask':
+      // マスクが下から閉じ、残った上側が上へ抜けて消える。
+      return motion(duration, timeMs => {
+        const eased = sampleProgress(timeMs);
+        const scale = 1 + 0.12 * eased;
+        return { clipBottom: eased, y: -24 * eased, scaleX: scale, scaleY: scale };
+      });
+    case 'genie':
+      // GENIE: 横幅を先に絞り、加速しながら下の受け口へ吸い込まれる。
+      return motion(duration, timeMs => {
+        const progress = Math.min(1, timeMs / Math.max(1, duration));
+        const eased = sampleProgress(timeMs);
+        const funnel = applyEasing('easeInQuad', Math.min(1, progress * 1.25));
+        return {
+          y: 260 * eased,
+          scaleX: 1 - 0.96 * funnel,
+          scaleY: 1 - 0.8 * eased,
+          alpha: progress < 0.8 ? 1 : 1 - (progress - 0.8) / 0.2
+        };
+      });
     case 'slam':
       return parallel(
         tween(duration, {}, { scaleX: 3.2, scaleY: 3.2 }, resolvedEasing),
@@ -233,10 +347,177 @@ export function createExit(
       return motion(duration, (timeMs, context) => ({
         alpha: sampleNoiseFade(timeMs, duration, resolvedEasing, context, 'out')
       }));
-    case 'hardStop':
+    case 'instant':
     default:
       return tween(Math.min(45, duration), { alpha: 1 }, { alpha: 0 }, 'linear');
   }
+}
+
+function autoEntranceEasing(name: EntranceName): EasingName {
+  switch (normalizeMotionName(name)) {
+    case 'slam':
+    case 'scale':
+      return 'easeOutBack';
+    // 物理モデル系は時間を等速で進め、曲線はモデル側で作る。
+    case 'spring':
+    case 'bounce':
+    case 'anticipate':
+      return 'linear';
+    case 'turnstile':
+    case 'mask':
+      return 'easeOutQuart';
+    default:
+      return 'easeOutCubic';
+  }
+}
+
+function autoExitEasing(name: ExitName): EasingName {
+  switch (normalizeMotionName(name)) {
+    case 'fall':
+    case 'soft':
+      return 'easeInQuad';
+    case 'spring':
+    case 'bounce':
+    case 'anticipate':
+      return 'linear';
+    default:
+      return 'easeInCubic';
+  }
+}
+
+/** 減衰比0.42・固有角周波数11の2次系ステップ応答。p=1で1に一致するよう残差を補正する。 */
+function sampleDampedSpring(progress: number): number {
+  const damping = 0.42;
+  const omega = 11;
+  const dampedOmega = omega * Math.sqrt(1 - damping * damping);
+  const response = (value: number): number => 1 - Math.exp(-damping * omega * value) * (
+    Math.cos(dampedOmega * value) + (damping / Math.sqrt(1 - damping * damping)) * Math.sin(dampedOmega * value)
+  );
+  const clamped = Math.min(1, Math.max(0, progress));
+  return response(clamped) + (1 - response(1)) * clamped;
+}
+
+/**
+ * ANTICIPATION: 本動作の約28%を逆方向への溜めに使い、
+ * 本動作後は減衰正弦で行き過ぎを戻す。
+ */
+function sampleAnticipation(progress: number, direction: 'in' | 'out'): Partial<MotionState> {
+  const windUp = 0.28;
+  const pull = 36;
+  if (direction === 'in') {
+    const distance = 260;
+    if (progress < windUp) {
+      const local = progress / windUp;
+      return { x: -distance - pull * applyEasing('easeOutQuad', local), skewX: 0.06 * local, alpha: 0.45 * local };
+    }
+    const local = (progress - windUp) / (1 - windUp);
+    const main = applyEasing('easeOutCubic', Math.min(1, local / 0.55));
+    let x = -(distance + pull) * (1 - main);
+    if (local > 0.55) {
+      const settle = (local - 0.55) / 0.45;
+      x += 14 * Math.sin(settle * Math.PI * 2) * (1 - settle) * (1 - settle);
+    }
+    return { x, skewX: -0.16 * (1 - main), alpha: 0.45 + 0.55 * Math.min(1, local * 3) };
+  }
+
+  if (progress < windUp) {
+    const local = progress / windUp;
+    return { x: -pull * applyEasing('easeOutQuad', local), skewX: -0.05 * local };
+  }
+  const local = (progress - windUp) / (1 - windUp);
+  return {
+    x: -pull + 330 * applyEasing('easeInCubic', local),
+    skewX: 0.16 * local,
+    alpha: 1 - applyEasing('easeInQuad', local)
+  };
+}
+
+/**
+ * SQUASH & STRETCH: 反発係数0.62で3回弾む落下を解析解で評価する。
+ * 速度に比例して縦へ伸ばし、接地の瞬間だけ潰す。面積は scaleX = 1 / scaleY で保つ。
+ */
+function sampleBounceIn(progress: number): Partial<MotionState> {
+  const height = 320;
+  const restitution = 0.62;
+  const bounces = 3;
+  let total = 1;
+  for (let bounce = 1; bounce <= bounces; bounce += 1) total += 2 * Math.pow(restitution, bounce);
+  const fallTime = 1 / total;
+  const gravity = 2 * height / (fallTime * fallTime);
+  const maxSpeed = gravity * fallTime;
+  // 最後の8%は着地後の潰れを戻す静止区間として残す。
+  const time = Math.min(1, Math.max(0, progress)) / 0.92;
+
+  let y = 0;
+  let velocity = 0;
+  let impactDistance = Number.POSITIVE_INFINITY;
+  let impactStrength = 0;
+  if (time < fallTime) {
+    y = -height + gravity * time * time / 2;
+    velocity = gravity * time;
+    impactDistance = fallTime - time;
+    impactStrength = 1;
+  } else {
+    let start = fallTime;
+    impactDistance = time - fallTime;
+    impactStrength = 1;
+    for (let bounce = 1; bounce <= bounces; bounce += 1) {
+      const launch = maxSpeed * Math.pow(restitution, bounce);
+      const airTime = 2 * fallTime * Math.pow(restitution, bounce);
+      if (time < start + airTime) {
+        const local = time - start;
+        y = -(launch * local - gravity * local * local / 2);
+        velocity = -launch + gravity * local;
+        const toNext = start + airTime - time;
+        if (toNext < impactDistance) {
+          impactDistance = toNext;
+          impactStrength = Math.pow(restitution, bounce);
+        }
+        break;
+      }
+      start += airTime;
+      impactDistance = time - start;
+      impactStrength = Math.pow(restitution, bounce);
+    }
+  }
+
+  const stretch = 1 + 0.3 * Math.abs(velocity) / maxSpeed;
+  const squash = 0.3 * impactStrength * Math.max(0, 1 - impactDistance / 0.025);
+  const scaleY = stretch * (1 - squash);
+  return { y, scaleY, scaleX: 1 / scaleY, alpha: Math.min(1, progress / 0.08) };
+}
+
+/** 一度潰れて溜め、跳び上がってから重力で画面下へ落ちる。 */
+function sampleBounceOut(progress: number): Partial<MotionState> {
+  const windUp = 0.18;
+  if (progress < windUp) {
+    const scaleY = 1 - 0.22 * Math.sin((progress / windUp) * Math.PI / 2);
+    return { scaleY, scaleX: 1 / scaleY };
+  }
+  // y(q) = 980q² - 560q: q≈0.29 で80px上の頂点、q=1 で420px下へ抜ける放物線。
+  const local = (progress - windUp) / (1 - windUp);
+  const velocity = 1960 * local - 560;
+  const stretch = 1 + 0.3 * Math.abs(velocity) / 1400;
+  return {
+    y: 980 * local * local - 560 * local,
+    scaleY: stretch,
+    scaleX: 1 / stretch,
+    alpha: 1 - applyEasing('easeInQuad', Math.max(0, (local - 0.55) / 0.45))
+  };
+}
+
+/**
+ * TURNSTILE: 入りは左端、出は右端を軸に90°未満で回る回転ドア。
+ * Y軸回転を横幅の余弦と縦方向のスキューで近似する。
+ */
+function sampleTurnstile(progress: number, context: MotionContext, direction: 'in' | 'out'): Partial<MotionState> {
+  const maxAngle = 80 * Math.PI / 180;
+  const halfWidth = (context.width ?? 240) / 2;
+  const angle = maxAngle * (direction === 'in' ? 1 - progress : progress);
+  const hingeShift = halfWidth * (1 - Math.cos(angle));
+  return direction === 'in'
+    ? { x: -hingeShift, scaleX: Math.cos(angle), skewY: -Math.sin(angle) * 0.3, alpha: Math.min(1, progress * 2.5) }
+    : { x: hingeShift, scaleX: Math.cos(angle), skewY: Math.sin(angle) * 0.3, alpha: 1 - applyEasing('easeInQuad', progress) };
 }
 
 export function createScreenMotion(name: ScreenMotionName): MotionClip {
@@ -268,6 +549,31 @@ export function createScreenMotion(name: ScreenMotionName): MotionClip {
         scaleX: 1 + Math.sin(timeMs * Math.PI * 2 / 1800) * 0.012,
         scaleY: 1 + Math.sin(timeMs * Math.PI * 2 / 1800) * 0.012
       }));
+    case 'whipPan':
+      // WHIP PAN: フレーズ冒頭420msで横に流れ込み、ぼけと傾きを残して減速着地する。
+      return motion(Number.POSITIVE_INFINITY, (timeMs, context) => {
+        const progress = Math.min(1, timeMs / 420);
+        if (progress >= 1) return {};
+        const remaining = 1 - applyEasing('easeOutQuart', progress);
+        return {
+          x: 1100 * remaining * Math.min(1, context.intensity),
+          skewX: -0.22 * remaining * remaining,
+          blur: 16 * remaining * remaining
+        };
+      });
+    case 'zoomDive':
+      // ZOOM DIVE: 3.2倍から指数的に引いて着地し、冒頭だけ暗転から立ち上がる。
+      return motion(Number.POSITIVE_INFINITY, timeMs => {
+        const progress = Math.min(1, timeMs / 300);
+        if (progress >= 1) return {};
+        const scale = Math.pow(3.2, 1 - applyEasing('easeOutCubic', progress));
+        return {
+          scaleX: scale,
+          scaleY: scale,
+          alpha: Math.min(1, timeMs / 60),
+          blur: 10 * (1 - progress) * (1 - progress)
+        };
+      });
     case 'none':
     default:
       return motion(Number.POSITIVE_INFINITY, () => ({}));

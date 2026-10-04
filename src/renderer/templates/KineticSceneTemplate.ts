@@ -25,6 +25,8 @@ import {
   createExit,
   createScreenMotion,
   createSustain,
+  MotionState,
+  normalizeMotionName,
   sampleClip,
   sceneCatalog,
   sampleVariableWeightPulse,
@@ -35,6 +37,9 @@ import {
 const TEXT_NAME = 'kinetic-scene-text';
 const CHAR_GROUP_NAME = 'kinetic-scene-char-group';
 const CHAR_NAME_PREFIX = 'kinetic-scene-char-';
+const CLIP_MASK_NAME = 'kinetic-scene-clip';
+const KARAOKE_FILL_NAME = 'kinetic-karaoke-fill';
+const KARAOKE_MASK_NAME = 'kinetic-karaoke-mask';
 
 function numberParam(params: Record<string, unknown>, name: string, fallback: number): number {
   const value = params[name];
@@ -56,8 +61,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
 
   readonly metadata: TemplateMetadata = {
     name: 'KineticSceneTemplate',
-    version: '1.2.0',
-    description: 'レイアウト・基本モーション・9系統のタイポグラフィエフェクトを自由に合成するシーンテンプレート',
+    version: '1.3.0',
+    description: 'レイアウト・基本モーション・11系統のタイポグラフィエフェクトを自由に合成するシーンテンプレート',
     license: 'GPL-3.0',
     originalAuthor: {
       name: 'UTAVISTA Development Team',
@@ -112,7 +117,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'destructionSlices', type: 'number', default: 9, min: 2, max: 24, step: 1, label: '破壊スライス数' },
       { name: 'destructionDuration', type: 'number', default: 900, min: 100, max: 4000, step: 20, label: '破壊・復元時間 (ms)' },
       { name: 'emittersEnabled', type: 'boolean', default: false, label: '文字オブジェクト放出' },
-      { name: 'emitterStyle', type: 'string', default: 'particles', options: ['particles', 'bubbles', 'eyes', 'noise'], label: '放出スタイル' },
+      { name: 'emitterStyle', type: 'string', default: 'particles', options: ['particles', 'bubbles', 'eyes', 'noise', 'speedLines'], label: '放出スタイル' },
       { name: 'emitterCount', type: 'number', default: 16, min: 1, max: 48, step: 1, label: '放出数' },
       { name: 'emitterRadius', type: 'number', default: 130, min: 10, max: 500, step: 5, label: '放出半径' },
       { name: 'surfaceEnabled', type: 'boolean', default: false, label: '文字曲面' },
@@ -131,7 +136,11 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       { name: 'baselineWaveOffset', type: 'number', default: 44, min: -150, max: 150, step: 1, label: '基線開始オフセット' },
       { name: 'baselineWaveOvershoot', type: 'number', default: 7, min: 0, max: 50, step: 1, label: '基線オーバーシュート' },
       { name: 'baselineWaveDuration', type: 'number', default: 840, min: 100, max: 4000, step: 10, label: '基線移動時間 (ms)' },
-      { name: 'baselineWaveStagger', type: 'number', default: 55, min: 0, max: 300, step: 5, label: '文字遅延 (ms)' }
+      { name: 'baselineWaveStagger', type: 'number', default: 55, min: 0, max: 300, step: 5, label: '文字遅延 (ms)' },
+      { name: 'karaokeFillEnabled', type: 'boolean', default: false, label: 'カラオケ塗り' },
+      { name: 'impactOutlineEnabled', type: 'boolean', default: false, label: '二重輪郭インパクト' },
+      { name: 'impactOutlineSpread', type: 'number', default: 14, min: 2, max: 60, step: 1, label: '輪郭拡散幅 (px)' },
+      { name: 'impactOutlineDuration', type: 'number', default: 220, min: 60, max: 1200, step: 10, label: '輪郭拡散時間 (ms)' }
     ];
   }
 
@@ -161,6 +170,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
 
   removeVisualElements(container: PIXI.Container): void {
     this.typographyEffects.cleanup(container);
+    this.applyBlur(container, 0);
+    this.applyClip(container, { clipTop: 0, clipBottom: 0 }, 0, 0);
     container.position.set(0, 0);
     container.scale.set(1, 1);
     container.skew.set(0, 0);
@@ -193,6 +204,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     container.skew.set(screenState.skewX, screenState.skewY);
     container.rotation = screenState.rotation;
     container.alpha = screenState.alpha;
+    this.applyBlur(container, screenState.blur);
     return true;
   }
 
@@ -212,7 +224,6 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const seed = numberParam(params, 'motionSeed', 2026);
     const phraseStartMs = numberParam(params, 'phraseStartMs', startMs);
     const phraseEndMs = numberParam(params, 'phraseEndMs', endMs);
-    const context: MotionContext = { seed, index, total, intensity };
     const scene = this.resolveScene(params);
 
     if (nowMs < phraseStartMs) {
@@ -221,11 +232,14 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     }
 
     const spacing = numberParam(params, 'charSpacing', 0.9);
+    const layoutContext: MotionContext = { seed, index, total, intensity };
     const layout = scene.layout === 'center'
       ? this.calculateCenteredWordLayout(params, index, fontSize, spacing, width)
       : scene.layout === 'fill'
         ? this.calculateFillWordLayout(params, index, total, fontSize, spacing, width, height)
-        : calculateLayout(scene.layout, { ...context, width, height, fontSize, spacing: spacing * 2.2 });
+        : calculateLayout(scene.layout, { ...layoutContext, width, height, fontSize, spacing: spacing * 2.2 });
+    const wordWidth = this.measureWordWidth(text, params, fontSize);
+    const context: MotionContext = { ...layoutContext, width: wordWidth * layout.scale };
 
     const entranceDuration = numberParam(params, 'entranceDuration', 520);
     const headTime = numberParam(params, 'headTime', 700);
@@ -263,6 +277,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     container.skew.set(motionState.skewX, motionState.skewY);
     container.rotation = layout.rotation + motionState.rotation;
     container.alpha = Math.max(0, Math.min(1, motionState.alpha));
+    this.applyBlur(container, motionState.blur);
+    this.applyClip(container, motionState, wordWidth / 2 + fontSize * 2, fontSize * 0.75);
 
     const color = nowMs < startMs
       ? stringParam(params, 'textColor', '#F3F0E8')
@@ -465,7 +481,20 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         (characterText as PIXI.Text & { __kineticSignature?: string }).__kineticSignature = signature;
       }
 
-      widths.push(this.measureTextWidth(character, fontFamily, fontSize, fontWeight));
+      const characterWidth = this.measureTextWidth(character, fontFamily, fontSize, fontWeight);
+      const fillProgress = params.karaokeFillEnabled === true && nowMs >= charStartMs && nowMs <= charEndMs
+        ? (nowMs - charStartMs) / Math.max(1, charEndMs - charStartMs)
+        : null;
+      this.updateKaraokeFill(
+        characterText,
+        fillProgress,
+        visibleCharacter,
+        () => this.createCharacterStyle(fontFamily, fontSize, fontWeight, completedColor),
+        `${visibleCharacter}|${fontFamily}|${fontSize}|${fontWeight}|${completedColor}`,
+        characterWidth,
+        fontSize
+      );
+      widths.push(characterWidth);
     });
 
     group.children
@@ -491,6 +520,53 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       }
       cursorX += characterWidth;
     });
+  }
+
+  /**
+   * KARAOKE FILL: 発声中の文字に発声後色の複製を重ね、左→右に開くマスクで塗り進める。
+   * 文字Textの子として持つため、文字単位の移動・変形に追従する。
+   */
+  private updateKaraokeFill(
+    characterText: PIXI.Text,
+    progress: number | null,
+    visibleCharacter: string,
+    createFillStyle: () => PIXI.TextStyle,
+    signature: string,
+    characterWidth: number,
+    fontSize: number
+  ): void {
+    let fill = characterText.children.find(child => child.name === KARAOKE_FILL_NAME) as
+      (PIXI.Text & { __kineticSignature?: string }) | undefined;
+    let mask = characterText.children.find(child => child.name === KARAOKE_MASK_NAME) as PIXI.Graphics | undefined;
+    if (progress === null) {
+      [fill, mask].forEach(child => {
+        if (!child) return;
+        characterText.removeChild(child);
+        child.destroy();
+      });
+      return;
+    }
+
+    if (!fill) {
+      fill = new PIXI.Text(visibleCharacter, createFillStyle());
+      fill.name = KARAOKE_FILL_NAME;
+      fill.anchor.set(0.5);
+      characterText.addChild(fill);
+    } else if (fill.__kineticSignature !== signature) {
+      fill.text = visibleCharacter;
+      fill.style = createFillStyle();
+    }
+    fill.__kineticSignature = signature;
+    if (!mask) {
+      mask = new PIXI.Graphics();
+      mask.name = KARAOKE_MASK_NAME;
+      characterText.addChild(mask);
+      fill.mask = mask;
+    }
+    mask.clear();
+    mask.beginFill(0xffffff);
+    mask.drawRect(-characterWidth / 2 - 2, -fontSize, (characterWidth + 2) * Math.min(1, Math.max(0, progress)), fontSize * 2);
+    mask.endFill();
   }
 
   private createCharacterStyle(fontFamily: string, fontSize: number, fontWeight: string, color: string): PIXI.TextStyle {
@@ -520,6 +596,67 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     const width = Math.max(0, PIXI.TextMetrics.measureText(text, style).width);
     this.textWidthCache.set(key, width);
     return width;
+  }
+
+  private measureWordWidth(text: string, params: Record<string, unknown>, fontSize: number): number {
+    const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
+    const fontWeight = stringParam(params, 'fontWeight', '700');
+    return Array.from(text).reduce(
+      (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize, fontWeight),
+      0
+    );
+  }
+
+  /** ぼかし量が1px未満なら通常描画へ戻し、フィルターを残さない。 */
+  private applyBlur(container: PIXI.Container, amount: number): void {
+    const holder = container as PIXI.Container & { __kineticBlur?: PIXI.BlurFilter };
+    if (!(amount >= 1)) {
+      if (holder.__kineticBlur) {
+        container.filters = (container.filters || []).filter(filter => filter !== holder.__kineticBlur);
+        if (container.filters.length === 0) container.filters = null;
+        holder.__kineticBlur.destroy();
+        delete holder.__kineticBlur;
+      }
+      return;
+    }
+    if (!holder.__kineticBlur) {
+      holder.__kineticBlur = new PIXI.BlurFilter(amount, 3);
+      container.filters = [...(container.filters || []), holder.__kineticBlur];
+    }
+    holder.__kineticBlur.blur = amount;
+  }
+
+  /** clipTop/clipBottom の割合だけ上下を隠す矩形マスク。どちらも0ならマスクを外す。 */
+  private applyClip(
+    container: PIXI.Container,
+    state: Pick<MotionState, 'clipTop' | 'clipBottom'>,
+    halfWidth: number,
+    halfHeight: number
+  ): void {
+    const top = Math.max(0, Math.min(1, state.clipTop));
+    const bottom = Math.max(0, Math.min(1, state.clipBottom));
+    let mask = container.children.find(child => child.name === CLIP_MASK_NAME) as PIXI.Graphics | undefined;
+    if (top <= 0.001 && bottom <= 0.001) {
+      if (mask) {
+        if (container.mask === mask) container.mask = null;
+        container.removeChild(mask);
+        mask.destroy();
+      }
+      return;
+    }
+    if (!mask) {
+      mask = new PIXI.Graphics();
+      mask.name = CLIP_MASK_NAME;
+      container.addChild(mask);
+    }
+    const fullHeight = halfHeight * 2;
+    const visibleTop = -halfHeight + fullHeight * top;
+    const visibleHeight = Math.max(0, fullHeight * (1 - top - bottom));
+    mask.clear();
+    mask.beginFill(0xffffff);
+    mask.drawRect(-halfWidth, visibleTop, halfWidth * 2, visibleHeight);
+    mask.endFill();
+    container.mask = mask;
   }
 
   private ensureText(
@@ -569,10 +706,10 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     nowMs: number,
     intensity: number
   ): void {
-    const { screen: screenMotion, sustain: sustainMotion } = this.resolveScene(params);
+    const { screen: screenMotion } = this.resolveScene(params);
     const mode = screenMotion === 'rgbDrift'
       ? 'rgb'
-      : screenMotion === 'afterimage' || sustainMotion === 'multiply'
+      : screenMotion === 'afterimage'
         ? 'echo'
         : 'none';
     const echoNames = ['kinetic-echo-a', 'kinetic-echo-b'];
@@ -622,9 +759,9 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   private resolveScene(params: Record<string, unknown>): SceneDefinition {
     return {
       layout: stringParam(params, 'motionLayout', 'center') as LayoutName,
-      entrance: stringParam(params, 'entranceMotion', 'slam') as EntranceName,
-      sustain: stringParam(params, 'sustainMotion', 'pulse') as SustainName,
-      exit: stringParam(params, 'exitMotion', 'collapse') as ExitName,
+      entrance: normalizeMotionName(stringParam(params, 'entranceMotion', 'slam')) as EntranceName,
+      sustain: normalizeMotionName(stringParam(params, 'sustainMotion', 'pulse')) as SustainName,
+      exit: normalizeMotionName(stringParam(params, 'exitMotion', 'collapse')) as ExitName,
       screen: stringParam(params, 'screenMotion', 'zoom') as ScreenMotionName
     };
   }
@@ -683,7 +820,10 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       baselineWaveOffset: numberParam(params, 'baselineWaveOffset', 44),
       baselineWaveOvershoot: numberParam(params, 'baselineWaveOvershoot', 7),
       baselineWaveDuration: numberParam(params, 'baselineWaveDuration', 840),
-      baselineWaveStagger: numberParam(params, 'baselineWaveStagger', 55)
+      baselineWaveStagger: numberParam(params, 'baselineWaveStagger', 55),
+      impactOutlineEnabled: params.impactOutlineEnabled === true,
+      impactOutlineSpread: numberParam(params, 'impactOutlineSpread', 14),
+      impactOutlineDuration: numberParam(params, 'impactOutlineDuration', 220)
     };
   }
 }

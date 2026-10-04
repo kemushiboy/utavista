@@ -2,6 +2,7 @@ import { StandardParameters, DEFAULT_PARAMETERS } from '../../types/StandardPara
 import { ParameterValidator } from '../../utils/ParameterValidator';
 import { templateRegistry } from '../templates/registry/templateRegistry';
 import { ParameterProcessor } from '../utils/ParameterProcessor';
+import { normalizeMotionName } from '../motion/Scene';
 
 // 完全なパラメータセット（すべて必須）
 export type CompleteParameters = Required<StandardParameters>;
@@ -72,11 +73,14 @@ export class ParameterManagerV2 {
     return this.removeDeprecatedParameters({ ...DEFAULT_PARAMETERS }) as CompleteParameters;
   }
 
-  /** 旧プロジェクトに残る、固定コンポーザーでは使わないパラメータを破棄する。 */
+  /** 旧プロジェクトに残る、固定コンポーザーでは使わないパラメータを破棄し、統合済みのモーション名を読み替える。 */
   private removeDeprecatedParameters<T extends Record<string, any>>(params: T): T {
-    const sanitized = { ...params };
+    const sanitized: Record<string, any> = { ...params };
     delete sanitized.tailTime;
-    return sanitized;
+    ['entranceMotion', 'sustainMotion', 'exitMotion'].forEach(name => {
+      if (typeof sanitized[name] === 'string') sanitized[name] = normalizeMotionName(sanitized[name]);
+    });
+    return sanitized as T;
   }
   
   /**

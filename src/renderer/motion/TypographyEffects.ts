@@ -4,7 +4,7 @@ import { deterministicNoise } from './Motion';
 const EFFECT_PREFIX = 'kinetic-effect-';
 const TAU = Math.PI * 2;
 
-export type EmitterStyle = 'particles' | 'bubbles' | 'eyes' | 'noise';
+export type EmitterStyle = 'particles' | 'bubbles' | 'eyes' | 'noise' | 'speedLines';
 export type SurfaceShape = 'ribbon' | 'cylinder' | 'torus';
 
 export interface TypographyEffectParams {
@@ -43,6 +43,9 @@ export interface TypographyEffectParams {
   baselineWaveOvershoot: number;
   baselineWaveDuration: number;
   baselineWaveStagger: number;
+  impactOutlineEnabled: boolean;
+  impactOutlineSpread: number;
+  impactOutlineDuration: number;
 }
 
 export interface TypographyEffectContext {
@@ -229,6 +232,7 @@ export class TypographyEffects {
     this.updateDestruction(container, source, visualSource, params, context);
     this.updateEmitters(container, source, params, context);
     this.updateSurfaceCopies(container, source, params, context);
+    this.updateImpactOutline(container, visualSource, params, context);
   }
 
   /**
@@ -484,6 +488,11 @@ export class TypographyEffects {
         graphic.name = name;
         container.addChild(graphic);
       }
+      if (params.emitterStyle === 'speedLines') {
+        graphic.clear();
+        this.drawSpeedLine(graphic, source, params, context, particleIndex, count, elapsed);
+        continue;
+      }
       const base = context.seed + context.index * 997 + particleIndex * 73;
       const cycle = (elapsed / (900 + Math.abs(deterministicNoise(base)) * 1100) + particleIndex / count) % 1;
       const angle = deterministicNoise(base + 17) * Math.PI + cycle * TAU * 0.16;
@@ -527,6 +536,76 @@ export class TypographyEffects {
     graphic.beginFill(0xffffff, 0.9);
     graphic.drawPolygon([0, -size, size * 0.7, size, 0, size * 0.45, -size * 0.7, size]);
     graphic.endFill();
+  }
+
+  /**
+   * DOUBLE OUTLINE: 歌唱開始の瞬間、本体と同色の輪郭だけを外側へ拡散させて打撃感を出す。
+   * 輪郭は 2px から spread px まで広がり、α 0.8 から急速に消える。
+   */
+  private updateImpactOutline(
+    container: PIXI.Container,
+    visualSource: PIXI.Container,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext
+  ): void {
+    const elapsed = context.nowMs - context.startMs;
+    const duration = Math.max(1, params.impactOutlineDuration);
+    if (!params.impactOutlineEnabled || elapsed < 0 || elapsed > duration) {
+      clearByPrefix(container, 'outline-');
+      return;
+    }
+
+    const progress = elapsed / duration;
+    const clone = ensureGroupClone(container, visualSource, `${EFFECT_PREFIX}outline-0`);
+    clone.children.forEach(child => {
+      if (child instanceof PIXI.Text) child.style = this.getOutlineStyle(child.style as PIXI.TextStyle);
+    });
+    const offset = 2 + (params.impactOutlineSpread - 2) * smoothstep(Math.min(1, progress * 1.6)) * context.intensity;
+    const halfHeight = Math.max(1, visualSource.height / 2);
+    clone.scale.set(1 + offset / halfHeight);
+    clone.alpha = 0.8 * Math.pow(1 - progress, 2);
+  }
+
+  private readonly outlineStyles = new WeakMap<PIXI.TextStyle, PIXI.TextStyle>();
+
+  /** 塗りを抜いて本体色の線だけにした文字スタイル。元スタイル単位でキャッシュする。 */
+  private getOutlineStyle(style: PIXI.TextStyle): PIXI.TextStyle {
+    const cached = this.outlineStyles.get(style);
+    if (cached) return cached;
+    const outline = style.clone();
+    outline.stroke = Array.isArray(style.fill) ? String(style.fill[0]) : String(style.fill);
+    outline.strokeThickness = Math.max(2, Number(style.fontSize) * 0.03);
+    outline.fill = 'rgba(0,0,0,0)';
+    outline.dropShadow = false;
+    this.outlineStyles.set(style, outline);
+    return outline;
+  }
+
+  /**
+   * SPEED LINES: 語を中心にした放射状の集中線。12fps相当で線の位置と長さを引き直し、
+   * 滑らかに補間しないことで打撃的な速度感を出す。
+   */
+  private drawSpeedLine(
+    graphic: PIXI.Graphics,
+    source: PIXI.Text,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext,
+    lineIndex: number,
+    count: number,
+    elapsed: number
+  ): void {
+    const frame = Math.floor(elapsed / 83);
+    const base = context.seed + context.index * 997 + lineIndex * 73 + frame * 389;
+    const angle = (lineIndex / count) * TAU + deterministicNoise(base) * (Math.PI / count);
+    const inner = Math.max(source.width, source.height) * 0.55 + Math.abs(deterministicNoise(base + 11)) * 24;
+    const length = params.emitterRadius * (0.4 + 0.6 * Math.abs(deterministicNoise(base + 13))) * context.intensity;
+    const thickness = 1.5 + Math.abs(deterministicNoise(base + 17)) * 3.5;
+    graphic.beginFill(0xffffff, 0.85);
+    graphic.drawPolygon([inner, -thickness / 2, inner + length, 0, inner, thickness / 2]);
+    graphic.endFill();
+    graphic.position.set(0, 0);
+    graphic.rotation = angle;
+    graphic.alpha = deterministicNoise(base + 19) > -0.45 ? 0.75 : 0;
   }
 
   private updateSurfaceCopies(
