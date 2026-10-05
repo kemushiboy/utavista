@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Engine } from '../../engine/Engine';
 import { ProjectFileManager } from '../../services/ProjectFileManager';
 import { DebugEventBus } from '../../utils/DebugEventBus';
@@ -71,6 +71,10 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
     window.addEventListener('utavista:background-transparency-changed', handleTransparencyChange);
     return () => window.removeEventListener('utavista:background-transparency-changed', handleTransparencyChange);
   }, []);
+  // エンジン準備前にマウントされるため、エンジンが渡った時点の背景状態で同期する。
+  useEffect(() => {
+    setIsTransparentBackground(engine?.isBackgroundTransparent?.() ?? false);
+  }, [engine]);
   // WebCodecsサポート状況（現在の設定に対する）
   const [webcodecsUnsupportedMsg, setWebcodecsUnsupportedMsg] = useState<string | null>(null);
   
@@ -78,7 +82,16 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   const [backgroundVideoFps, setBackgroundVideoFps] = useState<number | null>(null);
   const [fpsRecommendation, setFpsRecommendation] = useState<string>('');
   
-  const projectFileManager = useRef<ProjectFileManager>(new ProjectFileManager(engine));
+  // プロジェクトタブはタブ切替でアンマウントせず、エンジン準備前から表示されるため、
+  // 起動時の engine（未設定）を保持し続けないよう engine ごとに作り直す。
+  const projectFileManager = useMemo(
+    () => (engine ? new ProjectFileManager(engine) : null),
+    [engine]
+  );
+  const requireProjectFileManager = useCallback((): ProjectFileManager => {
+    if (!projectFileManager) throw new Error('エンジンの準備が完了していません');
+    return projectFileManager;
+  }, [projectFileManager]);
 
   useEffect(() => subscribeProjectSaveStatus(snapshot => {
     setLastSaved(snapshot ? new Date(snapshot.savedAt).toLocaleString('ja-JP') : '');
@@ -285,44 +298,44 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   const handleSave = useCallback(async () => {
     setIsLoading(true);
     try {
-      const savedPath = await projectFileManager.current.saveProject('project');
+      const savedPath = await requireProjectFileManager().saveProject('project');
       setLastSaved(new Date().toLocaleString('ja-JP'));
       showStatus(`プロジェクトを保存しました: ${savedPath}`, 'success');
     } catch (error) {
       console.error('Save error:', error);
-      showStatus('保存に失敗しました', 'error');
+      showStatus(`保存に失敗しました: ${error instanceof Error ? error.message : String(error)}`, 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [showStatus]);
+  }, [showStatus, requireProjectFileManager]);
 
   const handleSaveAs = useCallback(async () => {
     setIsLoading(true);
     try {
-      const savedPath = await projectFileManager.current.saveProject('project', true);
+      const savedPath = await requireProjectFileManager().saveProject('project', true);
       setLastSaved(new Date().toLocaleString('ja-JP'));
       showStatus(`別名で保存しました: ${savedPath}`, 'success');
     } catch (error) {
       console.error('Save as error:', error);
-      showStatus('別名保存に失敗しました', 'error');
+      showStatus(`別名保存に失敗しました: ${error instanceof Error ? error.message : String(error)}`, 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [showStatus]);
+  }, [showStatus, requireProjectFileManager]);
 
   // プロジェクト読み込み
   const handleOpen = useCallback(async () => {
     setIsLoading(true);
     try {
-      await projectFileManager.current.loadProject();
+      await requireProjectFileManager().loadProject();
       showStatus('プロジェクトを読み込みました', 'success');
     } catch (error) {
       console.error('Load error:', error);
-      showStatus('読み込みに失敗しました', 'error');
+      showStatus(`読み込みに失敗しました: ${error instanceof Error ? error.message : String(error)}`, 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [showStatus]);
+  }, [showStatus, requireProjectFileManager]);
 
 
   // 実際のエクスポート処理（透過背景はProRes 4444、それ以外はロックステップ）
@@ -677,11 +690,11 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
     };
 
     DebugEventBus.on('request-audio-file', handleRequestAudioFile);
-    
+
     return () => {
       DebugEventBus.off('request-audio-file', handleRequestAudioFile);
     };
-  }, [showStatus]);
+  }, [engine, showStatus]);
 
   // キーボードショートカット
   useEffect(() => {
