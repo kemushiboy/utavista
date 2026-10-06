@@ -106,6 +106,9 @@ export class FontService {
       // 初期描画で使用する標準フォントだけを先に確保する。
       await this.ensureFontLoaded('Arial');
 
+      // 起動直後に先に表示されたフォント選択欄へ、一覧が使えるようになったことを通知する。
+      window.dispatchEvent(new CustomEvent('fontSettingsChanged'));
+
     } catch (error) {
       console.error('[FontService] システムフォント取得エラー:', error);
       // エラーを再スローして上位で適切に処理
@@ -279,8 +282,9 @@ export class FontService {
    */
   private static createDisplayName(style?: string, weight?: string): string {
     const parts: string[] = [];
-    
-    if (weight && weight !== 'Normal' && weight !== 'Regular') {
+
+    // 数値ウェイトはラベル側で "(500)" のように併記するため、名前には含めない。
+    if (weight && weight !== 'Normal' && weight !== 'Regular' && !/^\d+$/.test(weight)) {
       parts.push(weight);
     }
     
@@ -537,7 +541,8 @@ export class FontService {
 
   private static normalizeFontWeight(weight?: string, style?: string): string {
     const normalized = (weight || '').toLowerCase();
-    if (/^[1-9]00$/.test(normalized)) return normalized;
+    // フォントファイルから読んだ数値ウェイト（250, 350 なども含む）はそのまま使う。
+    if (/^\d{1,4}$/.test(normalized) && Number(normalized) >= 1 && Number(normalized) <= 1000) return normalized;
     if (normalized === 'bold' || /bold|heavy|black/i.test(style || '')) return '700';
     if (normalized === 'lighter' || /light|thin/i.test(style || '')) return '300';
     return '400';
