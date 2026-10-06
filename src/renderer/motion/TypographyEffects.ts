@@ -136,21 +136,11 @@ function clearByPrefix(container: PIXI.Container, prefix: string): void {
     .forEach(destroyDisplayObject);
 }
 
-function ensureClone(container: PIXI.Container, source: PIXI.Text, name: string): PIXI.Text {
-  let clone = container.children.find(child => child.name === name) as PIXI.Text | undefined;
-  if (!clone) {
-    clone = new PIXI.Text(source.text, source.style);
-    clone.name = name;
-    clone.anchor.set(0.5);
-    container.addChildAt(clone, Math.max(0, container.getChildIndex(source)));
-  }
-  clone.text = source.text;
-  clone.style = source.style;
-  clone.tint = source.tint;
-  return clone;
-}
-
-function syncTextGroup(target: PIXI.Container, source: PIXI.Container): void {
+/**
+ * 文字グループ（文字単位のText）を、位置・拡大率・回転などの現在値ごと複製先へ写す。
+ * カーニングやベースラインウェーブなど文字単位の動きを反映した見た目を複製できる。
+ */
+export function syncTextGroup(target: PIXI.Container, source: PIXI.Container): void {
   const sourceTexts = source.children.filter((child): child is PIXI.Text => child instanceof PIXI.Text);
 
   sourceTexts.forEach((sourceText, index) => {
@@ -237,8 +227,10 @@ export class TypographyEffects {
     this.updateWarpFilter(visualSource, params, context);
     this.updateRepetition(container, visualSource, params, context);
     this.updateDestruction(container, source, visualSource, params, context);
-    this.updateEmitters(container, source, params, context);
-    this.updateSurfaceCopies(container, source, params, context);
+    // 放出・曲面は、文字単位の動き（カーニング等）を反映した文字グループの現在の範囲を基準にする。
+    const visualBounds = visualSource.getLocalBounds();
+    this.updateEmitters(container, visualBounds, params, context);
+    this.updateSurfaceCopies(container, visualSource, visualBounds, params, context);
     this.updateImpactOutline(container, visualSource, params, context);
   }
 
@@ -477,7 +469,7 @@ export class TypographyEffects {
 
   private updateEmitters(
     container: PIXI.Container,
-    source: PIXI.Text,
+    bounds: PIXI.Rectangle,
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
@@ -497,15 +489,15 @@ export class TypographyEffects {
       }
       if (params.emitterStyle === 'speedLines') {
         graphic.clear();
-        this.drawSpeedLine(graphic, source, params, context, particleIndex, count, elapsed);
+        this.drawSpeedLine(graphic, bounds, params, context, particleIndex, count, elapsed);
         continue;
       }
       const base = context.seed + context.index * 997 + particleIndex * 73;
       const cycle = (elapsed / (900 + Math.abs(deterministicNoise(base)) * 1100) + particleIndex / count) % 1;
       const angle = deterministicNoise(base + 17) * Math.PI + cycle * TAU * 0.16;
       const radius = params.emitterRadius * (0.18 + cycle * 0.82) * context.intensity;
-      const x = Math.cos(angle) * radius + deterministicNoise(base + 29) * source.width * 0.36;
-      const y = Math.sin(angle) * radius + deterministicNoise(base + 37) * source.height * 0.45;
+      const x = bounds.x + bounds.width / 2 + Math.cos(angle) * radius + deterministicNoise(base + 29) * bounds.width * 0.36;
+      const y = bounds.y + bounds.height / 2 + Math.sin(angle) * radius + deterministicNoise(base + 37) * bounds.height * 0.45;
       const size = 2 + Math.abs(deterministicNoise(base + 41)) * 8;
       graphic.clear();
       this.drawEmitter(graphic, params.emitterStyle, size, base);
@@ -654,7 +646,7 @@ export class TypographyEffects {
    */
   private drawSpeedLine(
     graphic: PIXI.Graphics,
-    source: PIXI.Text,
+    bounds: PIXI.Rectangle,
     params: TypographyEffectParams,
     context: TypographyEffectContext,
     lineIndex: number,
@@ -664,21 +656,22 @@ export class TypographyEffects {
     const frame = Math.floor(elapsed / (1000 / Math.max(1, params.emitterLineRate)));
     const base = context.seed + context.index * 997 + lineIndex * 73 + frame * 389;
     const angle = (lineIndex / count) * TAU + deterministicNoise(base) * (Math.PI / count);
-    const inner = Math.max(source.width, source.height) * params.emitterInnerRadius
+    const inner = Math.max(bounds.width, bounds.height) * params.emitterInnerRadius
       + Math.abs(deterministicNoise(base + 11)) * 24;
     const length = params.emitterRadius * (0.4 + 0.6 * Math.abs(deterministicNoise(base + 13))) * context.intensity;
     const thickness = params.emitterLineWidth * (0.3 + 0.7 * Math.abs(deterministicNoise(base + 17)));
     graphic.beginFill(0xffffff, 0.85);
     graphic.drawPolygon([inner, -thickness / 2, inner + length, 0, inner, thickness / 2]);
     graphic.endFill();
-    graphic.position.set(0, 0);
+    graphic.position.set(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
     graphic.rotation = angle;
     graphic.alpha = deterministicNoise(base + 19) > -0.45 ? 0.75 : 0;
   }
 
   private updateSurfaceCopies(
     container: PIXI.Container,
-    source: PIXI.Text,
+    visualSource: PIXI.Container,
+    bounds: PIXI.Rectangle,
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
@@ -688,24 +681,28 @@ export class TypographyEffects {
     }
     const count = Math.max(2, Math.min(12, Math.round(params.surfaceRepeat * 2)));
     for (let copyIndex = 0; copyIndex < count; copyIndex += 1) {
-      const clone = ensureClone(container, source, `${EFFECT_PREFIX}surface-${copyIndex}`);
+      // 文字グループを写し、カーニングやベースラインウェーブ後の見た目を曲面に並べる。
+      const clone = ensureGroupClone(container, visualSource, `${EFFECT_PREFIX}surface-${copyIndex}`);
       const unit = copyIndex / Math.max(1, count - 1);
       const angle = unit * TAU + context.nowMs * 0.00035;
       if (params.surfaceShape === 'torus') {
-        clone.position.set(Math.sin(angle) * source.width * 0.42, Math.cos(angle) * source.height * 0.72);
+        clone.position.set(Math.sin(angle) * bounds.width * 0.42, Math.cos(angle) * bounds.height * 0.72);
         clone.scale.set(0.28 + (Math.cos(angle) + 1) * 0.18);
         clone.rotation = Math.sin(angle) * 0.22;
       } else if (params.surfaceShape === 'cylinder') {
-        clone.position.set(Math.sin(angle) * source.width * 0.38, (unit - 0.5) * source.height * 1.2);
+        clone.position.set(Math.sin(angle) * bounds.width * 0.38, (unit - 0.5) * bounds.height * 1.2);
         clone.scale.set(0.25 + Math.abs(Math.cos(angle)) * 0.38, 0.5);
         clone.rotation = 0;
       } else {
-        clone.position.set((unit - 0.5) * source.width * 1.4, Math.sin(angle) * source.height * 0.5);
+        clone.position.set((unit - 0.5) * bounds.width * 1.4, Math.sin(angle) * bounds.height * 0.5);
         clone.scale.set(0.34);
         clone.rotation = Math.cos(angle) * 0.12;
       }
       clone.alpha = 0.08 + Math.max(0, Math.cos(angle)) * 0.24;
-      clone.blendMode = PIXI.BLEND_MODES.SCREEN;
+      // Container は blendMode を持たないため、各文字へ設定する。
+      clone.children.forEach(child => {
+        if (child instanceof PIXI.Text) child.blendMode = PIXI.BLEND_MODES.SCREEN;
+      });
     }
     container.children
       .filter(child => child.name?.startsWith(`${EFFECT_PREFIX}surface-`))

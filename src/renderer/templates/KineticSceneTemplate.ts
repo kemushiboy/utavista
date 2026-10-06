@@ -40,7 +40,8 @@ import {
   sceneCatalog,
   sampleVariableWeightPulse,
   TypographyEffects,
-  TypographyEffectParams
+  TypographyEffectParams,
+  syncTextGroup
 } from '../motion';
 
 const TEXT_NAME = 'kinetic-scene-text';
@@ -394,7 +395,6 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     container.rotation = layout.rotation + motionState.rotation;
     container.alpha = Math.max(0, Math.min(1, motionState.alpha));
     this.applyBlur(container, motionState.blur);
-    this.applyClip(container, motionState, wordWidth / 2 + fontSize * 0.1, fontSize * 0.75, wordWidth / 2 + fontSize * 2);
 
     const color = nowMs < startMs
       ? stringParam(params, 'textColor', '#F3F0E8')
@@ -436,7 +436,12 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     );
     // 本文は文字単位のTextで描画する。単語Textは複製・破壊などの効果生成源としてのみ保持する。
     textObject.renderable = false;
-    this.updateEchoes(container, textObject, params, nowMs, intensity);
+    this.updateEchoes(container, characterGroup, params, nowMs, intensity);
+    // マスクは文字単位の動き（カーニング・ベースラインウェーブ等）を反映した後の範囲で開閉する。
+    const groupBounds = characterGroup.getLocalBounds();
+    const textHalfWidth = Math.max(wordWidth / 2, Math.abs(groupBounds.left), Math.abs(groupBounds.right)) + fontSize * 0.1;
+    const textHalfHeight = Math.max(fontSize * 0.75, Math.abs(groupBounds.top), Math.abs(groupBounds.bottom));
+    this.applyClip(container, motionState, textHalfWidth, textHalfHeight, textHalfWidth + fontSize * 2);
     return true;
   }
 
@@ -860,9 +865,13 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     return textObject;
   }
 
+  /**
+   * RGB Drift / 残像のエコー。単語Textではなく、表示中の文字グループを写すことで、
+   * カーニングやベースラインウェーブなど文字単位の動きを反映した位置に重ねる。
+   */
   private updateEchoes(
     container: PIXI.Container,
-    source: PIXI.Text,
+    source: PIXI.Container,
     params: Record<string, unknown>,
     nowMs: number,
     intensity: number
@@ -887,35 +896,48 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     }
 
     echoNames.forEach((name, echoIndex) => {
-      let echo = container.children.find(child => child.name === name) as PIXI.Text | undefined;
+      let echo = container.children.find(child => child.name === name) as PIXI.Container | undefined;
+      if (echo && echo instanceof PIXI.Text) {
+        // 旧形式（単語Text）のエコーが残っていれば作り直す。
+        container.removeChild(echo);
+        echo.destroy();
+        echo = undefined;
+      }
       if (!echo) {
-        echo = new PIXI.Text(source.text, source.style);
+        echo = new PIXI.Container();
         echo.name = name;
-        echo.anchor.set(0.5);
         container.addChildAt(echo, 0);
       }
+      syncTextGroup(echo, source);
 
-      echo.text = source.text;
-      echo.style = source.style;
       const direction = echoIndex === 0 ? -1 : 1;
       const wave = Math.sin(nowMs * 0.025 + echoIndex * Math.PI);
+      let tint: number;
+      let blendMode: PIXI.BLEND_MODES;
 
       if (mode === 'rgb') {
         const split = numberParam(params, 'rgbDriftSplit', 1);
-        echo.tint = echoIndex === 0 ? 0xff245f : 0x20e3ff;
+        tint = echoIndex === 0 ? 0xff245f : 0x20e3ff;
+        blendMode = PIXI.BLEND_MODES.ADD;
         echo.alpha = 0.42;
         echo.position.set(direction * (4 + Math.abs(wave) * 5) * intensity * split, wave * 2 * intensity * split);
         echo.scale.set(1, 1);
-        echo.blendMode = PIXI.BLEND_MODES.ADD;
       } else {
         const spread = numberParam(params, 'afterimageSpread', 1);
-        echo.tint = 0xffffff;
+        tint = 0xffffff;
+        blendMode = PIXI.BLEND_MODES.SCREEN;
         echo.alpha = Math.min(1, Math.max(0.08, 0.22 - echoIndex * 0.06) * numberParam(params, 'afterimageOpacity', 1));
         echo.position.set(direction * (8 + echoIndex * 7) * intensity * spread, direction * 3 * intensity * spread);
         const echoScale = 1 + (echoIndex + 1) * 0.045 * intensity * spread;
         echo.scale.set(echoScale);
-        echo.blendMode = PIXI.BLEND_MODES.SCREEN;
       }
+      // Container は tint / blendMode を持たないため、各文字へ設定する。
+      echo.children.forEach(child => {
+        if (child instanceof PIXI.Text) {
+          child.tint = tint;
+          child.blendMode = blendMode;
+        }
+      });
     });
   }
 
