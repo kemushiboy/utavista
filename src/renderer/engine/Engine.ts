@@ -1007,6 +1007,11 @@ export class Engine {
   }
 
   reset() {
+    // 再生中に先頭へ戻した場合は、一度止めてから先頭で再生し直す。
+    // 止めずに音声だけ pause すると、タイムラインだけが進み音声が鳴らなくなる。
+    const wasRunning = this.isRunning;
+    if (wasRunning) this.pause();
+
     this.currentTime = 0;
     this.syncPlaybackClock(0);
     this.beatManager.sync(0);
@@ -1031,6 +1036,8 @@ export class Engine {
       this.backgroundVideo.pause();
       this.backgroundVideo.currentTime = 0;
     }
+
+    if (wasRunning) this.play();
   }
   
   // システムスリープ/ウェイクイベントのハンドラ設定
