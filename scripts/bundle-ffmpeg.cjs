@@ -59,12 +59,34 @@ function copyExecutable(source, destination) {
   fs.chmodSync(destination, 0o755);
 }
 
+// Chromium の既定スタイル（html.css）や起動用スナップショットを含むファイル。
+// 欠けるとアプリは起動するが <title> や <style> が表示されるなど画面が崩れる。
+const REQUIRED_CHROMIUM_FILES = ['resources.pak', 'chrome_100_percent.pak', 'chrome_200_percent.pak', 'snapshot_blob.bin'];
+
+/**
+ * Windows では出力先の UTAVISTA.exe を起動したままパッケージすると、
+ * 実行中のアプリが開いているファイルが置き換えられず、終了後に消えて欠落する。
+ * 壊れたパッケージを気付かず使わないよう、ここで検出してビルドを止める。
+ */
+function assertChromiumFiles(platform, appOutDir) {
+  if (platform === 'darwin') return; // macOS は Electron Framework 内に格納されるため対象外
+  const missing = REQUIRED_CHROMIUM_FILES.filter(file => !fs.existsSync(path.join(appOutDir, file)));
+  if (missing.length > 0) {
+    throw new Error(
+      `パッケージに Chromium の必須ファイルがありません: ${missing.join(', ')}\n` +
+      `出力先（${appOutDir}）のアプリを起動したままパッケージした可能性があります。` +
+      'UTAVISTA を終了してから、もう一度 npm run package を実行してください。'
+    );
+  }
+}
+
 exports.default = async function bundleFFmpeg(context) {
   const platform = context.electronPlatformName;
   const arch = ARCH_NAMES[context.arch];
   if (!arch) {
     throw new Error(`Unsupported arch for bundled ffmpeg: ${context.arch}`);
   }
+  assertChromiumFiles(platform, context.appOutDir);
 
   const resourcesDir = platform === 'darwin'
     ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
