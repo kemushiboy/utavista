@@ -14,6 +14,10 @@ export interface ElectronAPI {
   loadProject(): Promise<ProjectData>;
   consumePendingProject(): Promise<ProjectData | null>;
   onProjectOpenRequested(callback: () => void): () => void;
+  /** 終了前の確認用。handler は未保存の変更があれば true を返す。 */
+  onUnsavedChangesQuery(handler: () => boolean | Promise<boolean>): () => void;
+  /** 「保存して終了」用。handler は保存できたら true、キャンセル・失敗なら false を返す。 */
+  onSaveBeforeClose(handler: () => Promise<boolean>): () => void;
   selectMedia(type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo>;
   exportSrt(content: string, defaultFileName?: string): Promise<string | null>;
   exportPng(imageData: Uint8Array, defaultFileName?: string): Promise<string | null>;

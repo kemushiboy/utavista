@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Engine } from '../../engine/Engine';
 import { ProjectFileManager } from '../../services/ProjectFileManager';
+import { hasUnsavedChanges } from '../../services/ProjectDirtyTracker';
 import { DebugEventBus } from '../../utils/DebugEventBus';
 import { ModernVideoExportOptions } from '../../export/video/VideoExporter';
 import { Button, Select, Input, Section, StatusMessage } from '../common';
@@ -91,6 +92,20 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
   const requireProjectFileManager = useCallback((): ProjectFileManager => {
     if (!projectFileManager) throw new Error('エンジンの準備が完了していません');
     return projectFileManager;
+  }, [projectFileManager]);
+
+  // 未保存の変更の表示。保存内容の比較は軽くないため、一定間隔と基準更新時にだけ判定する。
+  const [hasUnsaved, setHasUnsaved] = useState(false);
+  useEffect(() => {
+    if (!projectFileManager) return;
+    const refresh = () => setHasUnsaved(hasUnsavedChanges(() => projectFileManager.getContentFingerprint()));
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    window.addEventListener('project-dirty-state-changed', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('project-dirty-state-changed', refresh);
+    };
   }, [projectFileManager]);
 
   useEffect(() => subscribeProjectSaveStatus(snapshot => {
@@ -744,6 +759,9 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
             <span className="label">最終保存:</span>
             <span className="value">{lastSaved || '未保存'}</span>
           </div>
+          {hasUnsaved && (
+            <div className="info-item unsaved-indicator">● 未保存の変更があります</div>
+          )}
         </div>
 
         {/* ステータス表示エリア */}

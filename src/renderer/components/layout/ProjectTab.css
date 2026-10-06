@@ -201,3 +201,8 @@
   font-size: var(--text-small);
   line-height: 1.5;
 }
+
+.unsaved-indicator {
+  color: #ffca28;
+  font-size: 0.9em;
+}

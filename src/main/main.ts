@@ -7,6 +7,7 @@ import { fileManager, setupFileHandlers } from './fileManager';
 import { setupExportHandlers } from './exportManager';
 import { fontManager } from './fontManager';
 import { persistenceManager } from './persistenceManager';
+import { installCloseGuard } from './closeGuard';
 
 function findProjectPath(args: string[]): string | null {
   const candidate = args.find(arg => path.extname(arg).toLowerCase() === '.uta');
@@ -116,6 +117,9 @@ class ElectronApp {
       this.notifyPendingProject();
     });
     
+    // 未保存の変更があれば閉じる前に確認する
+    installCloseGuard(this.mainWindow);
+
     // Window event handlers
     this.mainWindow.on('closed', () => {
       this.mainWindow = null;

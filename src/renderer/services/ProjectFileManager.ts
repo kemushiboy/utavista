@@ -8,11 +8,15 @@ import { StandardParameters } from '../types/StandardParameters';
 import { ParameterValidator } from '../../utils/ParameterValidator';
 import { ParameterProcessor } from '../utils/ParameterProcessor';
 import { setProjectSaveSnapshot } from './ProjectSaveStatus';
+import { markProjectClean } from './ProjectDirtyTracker';
 import { FontService } from './FontService';
 import {
   DEFAULT_POST_EFFECT_CONFIG,
   type GlobalPostEffectConfig
 } from '../effects/GlobalPostEffectManager';
+
+/** 読み込み後、遅延して行われる歌詞・個別設定の反映が終わるまでの待ち時間。 */
+export const PROJECT_LOAD_SETTLE_MS = 1500;
 
 // プロジェクトファイルのメタデータ
 export interface ProjectMetadata {
@@ -242,6 +246,8 @@ export class ProjectFileManager {
       globalTemplateId
     });
     setProjectSaveSnapshot({ savedAt: projectData.metadata.modifiedAt || new Date().toISOString() });
+    // 歌詞の反映（150ms後）などが終わってから、読み込んだ内容を未保存判定の基準にする。
+    markProjectClean(() => this.getContentFingerprint(), PROJECT_LOAD_SETTLE_MS);
   }
 
   /**
@@ -263,6 +269,7 @@ export class ProjectFileManager {
       // デバッグイベント発行
       DebugEventBus.emit('project-saved', { fileName: filePath });
       setProjectSaveSnapshot({ savedAt: new Date().toISOString(), filePath });
+      markProjectClean(() => this.getContentFingerprint());
       
       return filePath;
     } catch (error) {
@@ -377,6 +384,7 @@ export class ProjectFileManager {
         globalParams: projectData.globalParams
       });
       setProjectSaveSnapshot({ savedAt: projectData.metadata.modifiedAt || new Date().toISOString() });
+      markProjectClean(() => this.getContentFingerprint(), PROJECT_LOAD_SETTLE_MS);
       
       // UI更新のためのイベントを発火
       window.dispatchEvent(new CustomEvent('template-loaded', {
@@ -490,6 +498,15 @@ export class ProjectFileManager {
   /**
    * プロジェクトデータを構築
    */
+  /**
+   * 保存されるプロジェクト内容の比較用文字列。作成・更新日時などのメタデータは含めない。
+   * 「今保存したらファイルの中身が変わるか」で未保存の変更を判定するために使う。
+   */
+  getContentFingerprint(): string {
+    const { metadata: _metadata, ...contents } = this.buildProjectData('project');
+    return JSON.stringify(contents);
+  }
+
   private buildProjectData(projectName: string): ProjectFileData {
     const state = this.engine.getStateManager().exportFullState();
     
