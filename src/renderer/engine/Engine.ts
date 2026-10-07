@@ -142,6 +142,7 @@ export class Engine {
   private autoSaveTimer?: number;
   private lastAutoSaveTime: number = 0;
   private autoSaveEnabled: boolean = true;
+  private autoRestoreSettled: Promise<void> = Promise.resolve();
   private static readonly AUTO_SAVE_INTERVAL = 30000; // 30秒
   private static readonly AUTO_SAVE_EXPIRY = 24 * 60 * 60 * 1000; // 24時間
   
@@ -333,21 +334,33 @@ export class Engine {
     this.setupAutoSave();
     
     // 起動時に自動保存データの復元を試みる（PIXI初期化後に実行）
-    setTimeout(async () => {
-      try {
-        // PIXIアプリケーションの初期化が完了するまで待機
-        await this.waitForPixiInitialization();
-        
-        // まずステージ設定だけを先に適用
-        await this.initializeStageConfigFromAutoSave();
-        
-        // 自動復元を実行（ダイアログなし）
-        await this.silentAutoRestore();
-        
-      } catch (error) {
-        console.error('Engine: 自動保存データの確認でエラーが発生しました:', error);
-      }
-    }, 100);
+    this.autoRestoreSettled = new Promise<void>(resolve => {
+      setTimeout(async () => {
+        try {
+          // PIXIアプリケーションの初期化が完了するまで待機
+          await this.waitForPixiInitialization();
+
+          // まずステージ設定だけを先に適用
+          await this.initializeStageConfigFromAutoSave();
+
+          // 自動復元を実行（ダイアログなし）
+          await this.silentAutoRestore();
+
+        } catch (error) {
+          console.error('Engine: 自動保存データの確認でエラーが発生しました:', error);
+        } finally {
+          resolve();
+        }
+      }, 100);
+    });
+  }
+
+  /**
+   * 起動時の自動保存データの復元が終わったら解決する。
+   * 関連付けで開いた .uta などを読み込む前に待つことで、後から終わった自動復元に上書きされないようにする。
+   */
+  whenAutoRestoreSettled(): Promise<void> {
+    return this.autoRestoreSettled;
   }
 
   // PIXIアプリケーションの初期化完了を待機

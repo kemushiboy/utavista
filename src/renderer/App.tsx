@@ -440,6 +440,8 @@ function App() {
       if (disposed || externalProjectLoadInProgressRef.current || !engineRef.current) return;
       externalProjectLoadInProgressRef.current = true;
       try {
+        // 起動時の自動復元が後から終わると、読み込んだ .uta が自動保存の内容で上書きされるため先に待つ。
+        await engineRef.current.whenAutoRestoreSettled();
         while (!disposed && engineRef.current) {
           const projectData = await electronAPI.consumePendingProject();
           if (!projectData || disposed || !engineRef.current) break;
