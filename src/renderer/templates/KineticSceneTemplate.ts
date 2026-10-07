@@ -352,7 +352,9 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       ? this.calculateCenteredWordLayout(params, index, fontSize, spacing, width)
       : scene.layout === 'fill'
         ? this.calculateFillWordLayout(params, index, total, fontSize, spacing, width, height)
-        : calculateLayout(scene.layout, { ...layoutContext, width, height, fontSize, spacing: spacing * 2.2 });
+        : scene.layout === 'vertical'
+          ? this.calculateVerticalWordLayout(params, index, total, fontSize, spacing, width, height)
+          : calculateLayout(scene.layout, { ...layoutContext, width, height, fontSize, spacing: spacing * 2.2 });
     const wordWidth = this.measureWordWidth(text, params, fontSize);
     const context: MotionContext = { ...layoutContext, width: wordWidth * layout.scale };
 
@@ -481,9 +483,25 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     };
   }
 
+  /** フレーズ内の各単語の描画幅（実測）。短すぎる単語は最小幅を確保する。 */
+  private measurePhraseWordWidths(params: Record<string, unknown>, total: number, fontSize: number): number[] {
+    const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
+    const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
+    const fontWeight = params.variableWeightEnabled === true
+      ? String(numberParam(params, 'variableWeightMax', 900))
+      : stringParam(params, 'fontWeight', '700');
+    return Array.from({ length: total }, (_, wordIndex) => Math.max(
+      fontSize * 0.5,
+      Array.from(words[wordIndex]?.word || '　').reduce(
+        (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize, fontWeight),
+        0
+      )
+    ));
+  }
+
   /**
-   * 画面充填レイアウト。各行を単語の実測幅で中央揃えし、
-   * 一定の余白を保ちながらフレーズとして読める間隔へ詰める。
+   * 画面充填レイアウト。単語の実測幅から、各行の幅がなるべく揃う改行位置を求め、
+   * 文字が最も大きく表示できる行数を自動で選ぶ。各行は中央揃え。
    */
   private calculateFillWordLayout(
     params: Record<string, unknown>,
@@ -494,50 +512,113 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     stageWidth: number,
     stageHeight: number
   ): { x: number; y: number; rotation: number; scale: number } {
-    const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
-    const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
-    const fontWeight = params.variableWeightEnabled === true
-      ? String(numberParam(params, 'variableWeightMax', 900))
-      : stringParam(params, 'fontWeight', '700');
-    const wordWidths = Array.from({ length: total }, (_, wordIndex) => {
-      const text = words[wordIndex]?.word || '　';
-      return Math.max(
-        fontSize * 0.5,
-        Array.from(text).reduce(
-          (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize, fontWeight),
-          0
-        )
-      );
-    });
-
-    const columns = Math.max(1, Math.ceil(Math.sqrt(total * (stageWidth / Math.max(stageHeight, 1)))));
-    const rows = Math.max(1, Math.ceil(total / columns));
+    const widths = this.measurePhraseWordWidths(params, total, fontSize);
     const gap = fontSize * 0.3 * Math.max(0.35, spacing);
-    const rowWidths = Array.from({ length: rows }, (_, rowIndex) => {
-      const start = rowIndex * columns;
-      const widths = wordWidths.slice(start, Math.min(total, start + columns));
-      return widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, widths.length - 1);
-    });
-    const widestRow = Math.max(fontSize, ...rowWidths);
-    const scale = Math.min(
-      1.15,
-      stageWidth * 0.86 / widestRow,
-      stageHeight * 0.72 / Math.max(fontSize * 1.35 * rows, 1)
-    );
-    const row = Math.floor(index / columns);
-    const column = index % columns;
-    const rowStart = row * columns;
-    const rowWidth = rowWidths[row] || wordWidths[index] || fontSize;
-    const precedingWidth = wordWidths
-      .slice(rowStart, rowStart + column)
-      .reduce((sum, width) => sum + width, 0) + gap * column;
-    const currentWordWidth = wordWidths[index] || fontSize;
+    const lineHeight = fontSize * (1.2 + 0.15 * Math.max(0.35, spacing));
+    const maxScale = 1.15;
+
+    // 行数ごとに、行幅の最大値が最小になる改行位置（連続した単語の分割）を動的計画法で求める。
+    const prefix = [0];
+    widths.forEach(width => prefix.push(prefix[prefix.length - 1] + width));
+    const lineWidth = (from: number, to: number) => prefix[to] - prefix[from] + gap * Math.max(0, to - from - 1);
+    let best: { scale: number; breaks: number[] } | null = null;
+    for (let lines = 1; lines <= total; lines += 1) {
+      // cost[k][i]: 先頭 i 単語を k 行に分けたときの最大行幅
+      const cost: number[][] = Array.from({ length: lines + 1 }, () => new Array(total + 1).fill(Infinity));
+      const split: number[][] = Array.from({ length: lines + 1 }, () => new Array(total + 1).fill(0));
+      cost[0][0] = 0;
+      for (let k = 1; k <= lines; k += 1) {
+        for (let i = k; i <= total; i += 1) {
+          for (let j = k - 1; j < i; j += 1) {
+            const value = Math.max(cost[k - 1][j], lineWidth(j, i));
+            if (value < cost[k][i]) {
+              cost[k][i] = value;
+              split[k][i] = j;
+            }
+          }
+        }
+      }
+      const widest = cost[lines][total];
+      const scale = Math.min(maxScale, stageWidth * 0.86 / widest, stageHeight * 0.72 / (lines * lineHeight));
+      // ほぼ同じ大きさなら行数の少ない方を選ぶ（2%以上大きくなる場合だけ行を増やす）。
+      if (!best || scale > best.scale * 1.02) {
+        const breaks: number[] = [];
+        let end = total;
+        for (let k = lines; k >= 1; k -= 1) {
+          breaks.unshift(split[k][end]);
+          end = split[k][end];
+        }
+        best = { scale, breaks };
+      }
+    }
+
+    const breaks = best?.breaks ?? [0];
+    const scale = Math.max(0.2, best?.scale ?? 1);
+    const row = Math.max(0, breaks.findIndex((start, rowIndex) => index >= start
+      && index < (breaks[rowIndex + 1] ?? total)));
+    const rowStart = breaks[row];
+    const rowEnd = breaks[row + 1] ?? total;
+    const rowWidth = lineWidth(rowStart, rowEnd);
+    const precedingWidth = lineWidth(rowStart, index) + (index > rowStart ? gap : 0);
+    const currentWordWidth = widths[index] || fontSize;
 
     return {
       x: (-rowWidth / 2 + precedingWidth + currentWordWidth / 2) * scale,
-      y: (row - (rows - 1) / 2) * fontSize * 1.35 * scale,
+      y: (row - (breaks.length - 1) / 2) * lineHeight * scale,
       rotation: 0,
-      scale: Math.max(0.2, scale)
+      scale
+    };
+  }
+
+  /**
+   * 縦積みレイアウト。単語を1行ずつ縦に並べ、画面の高さ・幅に収まるよう全体を縮小する。
+   * 単語が多く大きく縮む場合は、文字を大きく保てるときだけ 2〜3 列に折り返す（左の列から順に）。
+   */
+  private calculateVerticalWordLayout(
+    params: Record<string, unknown>,
+    index: number,
+    total: number,
+    fontSize: number,
+    spacing: number,
+    stageWidth: number,
+    stageHeight: number
+  ): { x: number; y: number; rotation: number; scale: number } {
+    const widths = this.measurePhraseWordWidths(params, total, fontSize);
+    const rowPitch = fontSize * (1.1 + 0.35 * Math.max(0.35, spacing));
+    const columnGap = fontSize * (0.6 + 0.6 * Math.max(0.35, spacing));
+    const maxScale = 1.15;
+
+    const planFor = (columns: number) => {
+      const rows = Math.ceil(total / columns);
+      const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(
+        fontSize * 0.5,
+        ...widths.slice(column * rows, Math.min(total, (column + 1) * rows))
+      ));
+      const usedColumns = Math.ceil(total / rows);
+      const blockWidth = columnWidths.slice(0, usedColumns).reduce((sum, width) => sum + width, 0)
+        + columnGap * Math.max(0, usedColumns - 1);
+      const blockHeight = rows * rowPitch;
+      const scale = Math.min(maxScale, stageWidth * 0.88 / blockWidth, stageHeight * 0.86 / blockHeight);
+      return { rows, usedColumns, columnWidths, blockWidth, scale };
+    };
+
+    // 1列を基本にし、列を増やすと 10% 以上大きく表示できる場合だけ折り返す。
+    let plan = planFor(1);
+    for (let columns = 2; columns <= Math.min(3, total); columns += 1) {
+      const candidate = planFor(columns);
+      if (candidate.scale > plan.scale * 1.1) plan = candidate;
+    }
+
+    const scale = Math.max(0.2, plan.scale);
+    const column = Math.floor(index / plan.rows);
+    const row = index % plan.rows;
+    const rowsInColumn = Math.min(plan.rows, total - column * plan.rows);
+    const columnLeft = plan.columnWidths.slice(0, column).reduce((sum, width) => sum + width, 0) + columnGap * column;
+    return {
+      x: (-plan.blockWidth / 2 + columnLeft + plan.columnWidths[column] / 2) * scale,
+      y: (row - (rowsInColumn - 1) / 2) * rowPitch * scale,
+      rotation: 0,
+      scale
     };
   }
 
