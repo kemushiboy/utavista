@@ -42,6 +42,8 @@ const breathing = repeat(
 - Sustain: `still`, `shake`, `pulse`, `breathe`, `glitch`, `compress`
 - Screen: `none`, `cameraShake`, `zoom`, `rgbDrift`, `afterimage`, `whipPan`, `zoomDive`
 
+`center` / `fill` / `vertical` では、歌詞中の全角・半角スペースを改行候補として扱います。スペースは実際の文字幅（全角は約1文字分、半角はその約1/4）を単語間隔に加えた区切り幅になり、行頭・行末に来たスペースは詰めて各行を中央揃えにします。`fill` はスペース位置での改行を優先し、単語の途中にスペースがあればその位置でも改行します。`vertical` はスペースで区切られたまとまりごとに1行ずつ並べます。
+
 出現と消失は同じ名前の一覧から選び、それぞれ入る向き・抜ける向きの動きになります。
 
 | 名前 | 動き |

@@ -50,6 +50,30 @@ const CHAR_NAME_PREFIX = 'kinetic-scene-char-';
 const CLIP_MASK_NAME = 'kinetic-scene-clip';
 const KARAOKE_FILL_NAME = 'kinetic-karaoke-fill';
 const KARAOKE_MASK_NAME = 'kinetic-karaoke-mask';
+/** 半角・全角スペースなど、改行候補・行端で詰める対象とする空白文字。 */
+const WHITESPACE_PATTERN = /\s/u;
+
+/** スペースで区切られた文字のまとまり。separation は直前のトークンとの間隔（スペース＋単語間隔）。 */
+interface PhraseFlowToken {
+  word: number;
+  chars: number[];
+  charWidths: number[];
+  width: number;
+  separation: number;
+  breakable: boolean;
+  spaceBefore: boolean;
+}
+
+interface PhraseFlowPlacement {
+  x: number;
+  y: number;
+  rotation: number;
+  scale: number;
+  /** 表示される文字の幅（拡大前）。複数行にまたがる単語は全体の範囲。 */
+  width: number;
+  /** 単語内の各文字の中心座標（拡大前・単語の基準点から）。省略時は1行に並べる。 */
+  charOffsets?: Array<{ x: number; y: number }>;
+}
 
 function numberParam(params: Record<string, unknown>, name: string, fallback: number): number {
   const value = params[name];
@@ -165,6 +189,7 @@ function withVisibilityRules(configs: ParameterConfig[]): ParameterConfig[] {
 export class KineticSceneTemplate implements IAnimationTemplate {
   private readonly typographyEffects = new TypographyEffects();
   private readonly textWidthCache = new Map<string, number>();
+  private readonly phraseLayoutCache = new Map<string, PhraseFlowPlacement[]>();
 
   readonly metadata: TemplateMetadata = {
     name: 'KineticSceneTemplate',
@@ -348,14 +373,11 @@ export class KineticSceneTemplate implements IAnimationTemplate {
 
     const spacing = numberParam(params, 'charSpacing', 0.9);
     const layoutContext: MotionContext = { seed, index, total, intensity };
-    const layout = scene.layout === 'center'
-      ? this.calculateCenteredWordLayout(params, index, fontSize, spacing, width)
-      : scene.layout === 'fill'
-        ? this.calculateFillWordLayout(params, index, total, fontSize, spacing, width, height)
-        : scene.layout === 'vertical'
-          ? this.calculateVerticalWordLayout(params, index, total, fontSize, spacing, width, height)
-          : calculateLayout(scene.layout, { ...layoutContext, width, height, fontSize, spacing: spacing * 2.2 });
-    const wordWidth = this.measureWordWidth(text, params, fontSize);
+    const layout: { x: number; y: number; rotation: number; scale: number; width?: number; charOffsets?: Array<{ x: number; y: number }> } =
+      scene.layout === 'center' || scene.layout === 'fill' || scene.layout === 'vertical'
+        ? this.calculatePhraseFlowLayout(scene.layout, params, index, total, text, fontSize, spacing, width, height)
+        : calculateLayout(scene.layout, { ...layoutContext, width, height, fontSize, spacing: spacing * 2.2 });
+    const wordWidth = layout.width ?? this.measureWordWidth(text.trim(), params, fontSize);
     const context: MotionContext = { ...layoutContext, width: wordWidth * layout.scale };
 
     const entranceDuration = numberParam(params, 'entranceDuration', 520);
@@ -426,7 +448,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       nowMs,
       startMs,
       endMs,
-      animatedFontWeight
+      animatedFontWeight,
+      layout.charOffsets
     );
     const characterGroup = container.children.find(child => child.name === CHAR_GROUP_NAME) as PIXI.Container;
     this.typographyEffects.update(
@@ -447,153 +470,263 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     return true;
   }
 
-  private calculateCenteredWordLayout(
+  /**
+   * フレーズ内の文字を「スペースで区切られたまとまり（トークン）」に分ける。
+   * 全角・半角スペースはトークン間の余白として扱い、行頭・行末に来た場合は詰める。
+   * 単語の境界とスペースの位置だけを改行候補にし、単語内の連続した文字は分割しない。
+   */
+  private buildPhraseTokens(
     params: Record<string, unknown>,
-    index: number,
+    total: number,
+    currentIndex: number,
+    currentText: string,
     fontSize: number,
-    spacing: number,
-    stageWidth: number
-  ): { x: number; y: number; rotation: number; scale: number } {
+    gap: number
+  ): PhraseFlowToken[] {
     const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
     const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
     const fontWeight = params.variableWeightEnabled === true
       ? String(numberParam(params, 'variableWeightMax', 900))
       : stringParam(params, 'fontWeight', '700');
-    const widths = words.map(word => Math.max(
-      fontSize * 0.5,
-      Array.from(word.word || ' ').reduce(
-        (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize, fontWeight),
-        0
-      )
-    ));
-    if (widths.length === 0 || index >= widths.length) {
-      return { x: (index - (Math.max(1, numberParam(params, 'totalWords', 1)) - 1) / 2) * fontSize * 2, y: 0, rotation: 0, scale: 1 };
+    const tokens: PhraseFlowToken[] = [];
+    // スペースは実際の文字幅（全角は約1文字分、半角はその約1/4）を単語間隔に加えた区切り幅にする。
+    let pendingSpace = 0;
+    for (let wordIndex = 0; wordIndex < total; wordIndex += 1) {
+      const wordText = words[wordIndex]?.word ?? (wordIndex === currentIndex ? currentText : undefined);
+      if (wordText === undefined) {
+        // 単語データが無い場合は 1 文字分の仮トークンで位置だけ確保する。
+        tokens.push({ word: wordIndex, chars: [], charWidths: [], width: fontSize, separation: tokens.length > 0 ? gap + pendingSpace : 0, breakable: tokens.length > 0, spaceBefore: pendingSpace > 0 });
+        pendingSpace = 0;
+        continue;
+      }
+      let current: PhraseFlowToken | null = null;
+      let firstInWord = true;
+      Array.from(wordText).forEach((character, characterIndex) => {
+        if (WHITESPACE_PATTERN.test(character)) {
+          pendingSpace += this.measureTextWidth(character, fontFamily, fontSize, fontWeight);
+          current = null;
+          return;
+        }
+        if (!current) {
+          const wordBoundary = firstInWord && tokens.length > 0;
+          current = {
+            word: wordIndex,
+            chars: [],
+            charWidths: [],
+            width: 0,
+            separation: tokens.length > 0 ? (pendingSpace > 0 ? gap + pendingSpace : wordBoundary ? gap : 0) : 0,
+            breakable: tokens.length > 0,
+            spaceBefore: pendingSpace > 0
+          };
+          tokens.push(current);
+          pendingSpace = 0;
+          firstInWord = false;
+        }
+        const characterWidth = this.measureTextWidth(character, fontFamily, fontSize, fontWeight);
+        current.chars.push(characterIndex);
+        current.charWidths.push(characterWidth);
+        current.width += characterWidth;
+      });
     }
-
-    const gap = fontSize * 0.38 * spacing;
-    const naturalWidth = widths.reduce((sum, wordWidth) => sum + wordWidth, 0)
-      + gap * Math.max(0, widths.length - 1);
-    const scale = Math.min(1, (stageWidth * 0.88) / Math.max(1, naturalWidth));
-    const precedingWidth = widths.slice(0, index).reduce((sum, wordWidth) => sum + wordWidth, 0) + gap * index;
-    return {
-      x: (-naturalWidth / 2 + precedingWidth + widths[index] / 2) * scale,
-      y: 0,
-      rotation: 0,
-      scale
-    };
-  }
-
-  /** フレーズ内の各単語の描画幅（実測）。短すぎる単語は最小幅を確保する。 */
-  private measurePhraseWordWidths(params: Record<string, unknown>, total: number, fontSize: number): number[] {
-    const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
-    const fontFamily = FontService.normalizeFontFamily(stringParam(params, 'fontFamily', 'Arial'));
-    const fontWeight = params.variableWeightEnabled === true
-      ? String(numberParam(params, 'variableWeightMax', 900))
-      : stringParam(params, 'fontWeight', '700');
-    return Array.from({ length: total }, (_, wordIndex) => Math.max(
-      fontSize * 0.5,
-      Array.from(words[wordIndex]?.word || '　').reduce(
-        (sum, character) => sum + this.measureTextWidth(character, fontFamily, fontSize, fontWeight),
-        0
-      )
-    ));
+    return tokens;
   }
 
   /**
-   * 画面充填レイアウト。単語の実測幅から、各行の幅がなるべく揃う改行位置を求め、
-   * 文字が最も大きく表示できる行数を自動で選ぶ。各行は中央揃え。
+   * トークン列を指定の改行候補で行に分ける。行幅の最大値が最小になる分割を行数ごとに求め、
+   * 文字が最も大きく表示できる行数を選ぶ（ほぼ同じ大きさなら行数の少ない方）。
    */
-  private calculateFillWordLayout(
-    params: Record<string, unknown>,
-    index: number,
-    total: number,
-    fontSize: number,
-    spacing: number,
-    stageWidth: number,
-    stageHeight: number
-  ): { x: number; y: number; rotation: number; scale: number } {
-    const widths = this.measurePhraseWordWidths(params, total, fontSize);
-    const gap = fontSize * 0.3 * Math.max(0.35, spacing);
-    const lineHeight = fontSize * (1.2 + 0.15 * Math.max(0.35, spacing));
-    const maxScale = 1.15;
-
-    // 行数ごとに、行幅の最大値が最小になる改行位置（連続した単語の分割）を動的計画法で求める。
+  private breakPhraseTokens(
+    tokens: PhraseFlowToken[],
+    canBreakBefore: (tokenIndex: number) => boolean,
+    scaleFor: (widest: number, lines: number) => number,
+    maxLines: number
+  ): { scale: number; breaks: number[] } {
+    const count = tokens.length;
     const prefix = [0];
-    widths.forEach(width => prefix.push(prefix[prefix.length - 1] + width));
-    const lineWidth = (from: number, to: number) => prefix[to] - prefix[from] + gap * Math.max(0, to - from - 1);
-    let best: { scale: number; breaks: number[] } | null = null;
-    for (let lines = 1; lines <= total; lines += 1) {
-      // cost[k][i]: 先頭 i 単語を k 行に分けたときの最大行幅
-      const cost: number[][] = Array.from({ length: lines + 1 }, () => new Array(total + 1).fill(Infinity));
-      const split: number[][] = Array.from({ length: lines + 1 }, () => new Array(total + 1).fill(0));
-      cost[0][0] = 0;
-      for (let k = 1; k <= lines; k += 1) {
-        for (let i = k; i <= total; i += 1) {
-          for (let j = k - 1; j < i; j += 1) {
-            const value = Math.max(cost[k - 1][j], lineWidth(j, i));
-            if (value < cost[k][i]) {
-              cost[k][i] = value;
-              split[k][i] = j;
-            }
+    tokens.forEach((token, tokenIndex) => prefix.push(prefix[tokenIndex] + token.width + (tokenIndex > 0 ? token.separation : 0)));
+    // 行頭トークンの手前の余白（スペース・単語間隔）は行幅に含めない。
+    const lineWidth = (from: number, to: number) => prefix[to] - prefix[from] - (from > 0 ? tokens[from].separation : 0);
+    const candidates = [0];
+    for (let tokenIndex = 1; tokenIndex < count; tokenIndex += 1) {
+      if (canBreakBefore(tokenIndex)) candidates.push(tokenIndex);
+    }
+    candidates.push(count);
+
+    let best: { scale: number; breaks: number[] } = { scale: scaleFor(lineWidth(0, count), 1), breaks: [0] };
+    const segments = candidates.length - 1;
+    // cost[k][c]: 先頭から候補 c までを k 行に分けたときの最大行幅
+    const cost: number[][] = [new Array(candidates.length).fill(Infinity)];
+    const split: number[][] = [new Array(candidates.length).fill(0)];
+    cost[0][0] = 0;
+    for (let lines = 1; lines <= Math.min(maxLines, segments); lines += 1) {
+      cost.push(new Array(candidates.length).fill(Infinity));
+      split.push(new Array(candidates.length).fill(0));
+      for (let end = lines; end < candidates.length; end += 1) {
+        for (let start = lines - 1; start < end; start += 1) {
+          const value = Math.max(cost[lines - 1][start], lineWidth(candidates[start], candidates[end]));
+          if (value < cost[lines][end]) {
+            cost[lines][end] = value;
+            split[lines][end] = start;
           }
         }
       }
-      const widest = cost[lines][total];
-      const scale = Math.min(maxScale, stageWidth * 0.86 / widest, stageHeight * 0.72 / (lines * lineHeight));
-      // ほぼ同じ大きさなら行数の少ない方を選ぶ（2%以上大きくなる場合だけ行を増やす）。
-      if (!best || scale > best.scale * 1.02) {
+      const scale = scaleFor(cost[lines][segments], lines);
+      if (lines > 1 && scale > best.scale * 1.02) {
         const breaks: number[] = [];
-        let end = total;
+        let end = segments;
         for (let k = lines; k >= 1; k -= 1) {
-          breaks.unshift(split[k][end]);
+          breaks.unshift(candidates[split[k][end]]);
           end = split[k][end];
         }
         best = { scale, breaks };
       }
     }
-
-    const breaks = best?.breaks ?? [0];
-    const scale = Math.max(0.2, best?.scale ?? 1);
-    const row = Math.max(0, breaks.findIndex((start, rowIndex) => index >= start
-      && index < (breaks[rowIndex + 1] ?? total)));
-    const rowStart = breaks[row];
-    const rowEnd = breaks[row + 1] ?? total;
-    const rowWidth = lineWidth(rowStart, rowEnd);
-    const precedingWidth = lineWidth(rowStart, index) + (index > rowStart ? gap : 0);
-    const currentWordWidth = widths[index] || fontSize;
-
-    return {
-      x: (-rowWidth / 2 + precedingWidth + currentWordWidth / 2) * scale,
-      y: (row - (breaks.length - 1) / 2) * lineHeight * scale,
-      rotation: 0,
-      scale
-    };
+    return best;
   }
 
   /**
-   * 縦積みレイアウト。単語を1列に1行ずつ縦に並べ、画面の高さ・幅に収まるよう全体を縮小する。
-   * 縦書きとして読む順序を崩さないよう、列には折り返さない。
+   * 中央・画面充填・縦積みレイアウト。スペースを改行候補として扱い、
+   * 行頭・行末のスペースを詰めたうえで各行を中央揃えにする。
+   * 単語がスペースを挟んで複数行にまたがる場合は、文字ごとの配置（charOffsets）も返す。
    */
-  private calculateVerticalWordLayout(
+  private calculatePhraseFlowLayout(
+    mode: 'center' | 'fill' | 'vertical',
     params: Record<string, unknown>,
     index: number,
     total: number,
+    text: string,
     fontSize: number,
     spacing: number,
     stageWidth: number,
     stageHeight: number
-  ): { x: number; y: number; rotation: number; scale: number } {
-    const widths = this.measurePhraseWordWidths(params, total, fontSize);
-    const rowPitch = fontSize * (1.1 + 0.35 * Math.max(0.35, spacing));
-    const blockWidth = Math.max(fontSize * 0.5, ...widths);
-    const blockHeight = total * rowPitch;
-    const scale = Math.max(0.2, Math.min(1.15, stageWidth * 0.88 / blockWidth, stageHeight * 0.86 / blockHeight));
-    return {
-      x: 0,
-      y: (index - (total - 1) / 2) * rowPitch * scale,
-      rotation: 0,
-      scale
-    };
+  ): PhraseFlowPlacement {
+    const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
+    const cacheKey = [
+      mode, total, index >= words.length ? text : '', fontSize, spacing, stageWidth, stageHeight,
+      stringParam(params, 'fontFamily', 'Arial'), stringParam(params, 'fontWeight', '700'),
+      params.variableWeightEnabled === true ? numberParam(params, 'variableWeightMax', 900) : '',
+      ...words.map(word => word?.word ?? '')
+    ].join('\u0001');
+    let placements = this.phraseLayoutCache.get(cacheKey);
+    if (!placements) {
+      placements = this.computePhraseFlowPlacements(mode, params, index, total, text, fontSize, spacing, stageWidth, stageHeight);
+      if (this.phraseLayoutCache.size > 64) this.phraseLayoutCache.clear();
+      this.phraseLayoutCache.set(cacheKey, placements);
+    }
+    return placements[index] ?? { x: 0, y: 0, rotation: 0, scale: 1, width: fontSize };
+  }
+
+  private computePhraseFlowPlacements(
+    mode: 'center' | 'fill' | 'vertical',
+    params: Record<string, unknown>,
+    index: number,
+    total: number,
+    text: string,
+    fontSize: number,
+    spacing: number,
+    stageWidth: number,
+    stageHeight: number
+  ): PhraseFlowPlacement[] {
+    const gap = mode === 'center'
+      ? fontSize * 0.38 * spacing
+      : fontSize * 0.3 * Math.max(0.35, spacing);
+    const lineHeight = mode === 'vertical'
+      ? fontSize * (1.1 + 0.35 * Math.max(0.35, spacing))
+      : fontSize * (1.2 + 0.15 * Math.max(0.35, spacing));
+    const words = Array.isArray(params.words) ? params.words as Array<{ word?: string }> : [];
+    const tokens = this.buildPhraseTokens(params, total, index, text, fontSize, gap);
+    if (tokens.length === 0) {
+      return Array.from({ length: total }, () => ({ x: 0, y: 0, rotation: 0, scale: 1, width: 0 }));
+    }
+
+    let breaks: number[];
+    let scale: number;
+    if (mode === 'center') {
+      const plan = this.breakPhraseTokens(tokens, () => false, widest => Math.min(1, stageWidth * 0.88 / Math.max(1, widest)), 1);
+      breaks = plan.breaks;
+      scale = plan.scale;
+    } else if (mode === 'vertical') {
+      // 縦積みは改行候補ごとに 1 行。列には折り返さない。
+      breaks = tokens.map((token, tokenIndex) => tokenIndex).filter(tokenIndex => tokenIndex === 0 || tokens[tokenIndex].breakable);
+      const widest = Math.max(fontSize * 0.5, ...breaks.map((start, row) => {
+        const end = breaks[row + 1] ?? tokens.length;
+        return tokens.slice(start, end).reduce((sum, token, offset) => sum + token.width + (offset > 0 ? token.separation : 0), 0);
+      }));
+      scale = Math.min(1.15, stageWidth * 0.88 / widest, stageHeight * 0.86 / (breaks.length * lineHeight));
+    } else {
+      const scaleFor = (widest: number, lines: number) => Math.min(
+        1.15,
+        stageWidth * 0.86 / Math.max(1, widest),
+        stageHeight * 0.72 / (lines * lineHeight)
+      );
+      // スペースがある場合はスペース位置での改行を優先し、それより大幅に大きく表示できるときだけ単語境界でも改行する。
+      const anyBoundary = this.breakPhraseTokens(tokens, tokenIndex => tokens[tokenIndex].breakable, scaleFor, tokens.length);
+      const hasSpaces = tokens.some((token, tokenIndex) => tokenIndex > 0 && token.spaceBefore);
+      const atSpaces = hasSpaces
+        ? this.breakPhraseTokens(tokens, tokenIndex => tokens[tokenIndex].spaceBefore, scaleFor, tokens.length)
+        : anyBoundary;
+      const plan = anyBoundary.scale > atSpaces.scale * 1.15 ? anyBoundary : atSpaces;
+      breaks = plan.breaks;
+      scale = plan.scale;
+    }
+    scale = Math.max(0.2, scale);
+
+    // 各トークンの中心座標（拡大前の単位）を求める。
+    const centers: Array<{ x: number; y: number }> = [];
+    breaks.forEach((start, row) => {
+      const end = breaks[row + 1] ?? tokens.length;
+      const rowWidth = tokens.slice(start, end).reduce((sum, token, offset) => sum + token.width + (offset > 0 ? token.separation : 0), 0);
+      let cursor = -rowWidth / 2;
+      for (let tokenIndex = start; tokenIndex < end; tokenIndex += 1) {
+        if (tokenIndex > start) cursor += tokens[tokenIndex].separation;
+        centers[tokenIndex] = { x: cursor + tokens[tokenIndex].width / 2, y: (row - (breaks.length - 1) / 2) * lineHeight };
+        cursor += tokens[tokenIndex].width;
+      }
+    });
+
+    let previous: PhraseFlowPlacement = { x: 0, y: 0, rotation: 0, scale, width: 0 };
+    return Array.from({ length: total }, (_, wordIndex) => {
+      const wordTokens = tokens
+        .map((token, tokenIndex) => ({ token, center: centers[tokenIndex] }))
+        .filter(entry => entry.token.word === wordIndex);
+      if (wordTokens.length === 0) {
+        // スペースだけの単語は表示する文字が無いので、直前の単語の位置に置く。
+        previous = { ...previous, width: 0, charOffsets: undefined };
+        return previous;
+      }
+      const left = Math.min(...wordTokens.map(entry => entry.center.x - entry.token.width / 2));
+      const right = Math.max(...wordTokens.map(entry => entry.center.x + entry.token.width / 2));
+      const top = Math.min(...wordTokens.map(entry => entry.center.y));
+      const bottom = Math.max(...wordTokens.map(entry => entry.center.y));
+      const anchor = { x: (left + right) / 2, y: (top + bottom) / 2 };
+      // 文字ごとの配置。スペース文字は直前の文字の右隣（非表示）に置く。
+      const characters = Array.from(words[wordIndex]?.word ?? (wordIndex === index ? text : ''));
+      const charOffsets: Array<{ x: number; y: number }> = [];
+      wordTokens.forEach(({ token, center }) => {
+        let cursor = center.x - token.width / 2 - anchor.x;
+        token.chars.forEach((characterIndex, offset) => {
+          charOffsets[characterIndex] = { x: cursor + token.charWidths[offset] / 2, y: center.y - anchor.y };
+          cursor += token.charWidths[offset];
+        });
+      });
+      let last = { x: wordTokens[0].center.x - wordTokens[0].token.width / 2 - anchor.x, y: wordTokens[0].center.y - anchor.y };
+      characters.forEach((_, characterIndex) => {
+        if (charOffsets[characterIndex]) {
+          last = charOffsets[characterIndex];
+        } else {
+          charOffsets[characterIndex] = { ...last };
+        }
+      });
+      previous = {
+        x: anchor.x * scale,
+        y: anchor.y * scale,
+        rotation: 0,
+        scale,
+        width: right - left,
+        charOffsets: characters.length > 0 ? charOffsets : undefined
+      };
+      return previous;
+    });
   }
 
   private updateCharacterText(
@@ -605,7 +738,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
     nowMs: number,
     wordStartMs: number,
     wordEndMs: number,
-    fontWeightOverride?: string
+    fontWeightOverride?: string,
+    charOffsets?: Array<{ x: number; y: number }>
   ): void {
     let group = container.children.find(child => child.name === CHAR_GROUP_NAME) as PIXI.Container | undefined;
     if (!group) {
@@ -687,14 +821,27 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         child.destroy();
       });
 
+    // 先頭・末尾のスペースを除いた表示部分が単語の中心に来るよう並べる。
+    const isSpace = (characterIndex: number) => WHITESPACE_PATTERN.test(originalCharacters[characterIndex]);
     const totalWidth = widths.reduce((sum, characterWidth) => sum + characterWidth, 0);
-    let cursorX = -totalWidth / 2;
+    let leadingSpace = 0;
+    for (let characterIndex = 0; characterIndex < widths.length && isSpace(characterIndex); characterIndex += 1) {
+      leadingSpace += widths[characterIndex];
+    }
+    let trailingSpace = 0;
+    for (let characterIndex = widths.length - 1; characterIndex >= 0 && isSpace(characterIndex) && leadingSpace < totalWidth; characterIndex -= 1) {
+      trailingSpace += widths[characterIndex];
+    }
+    let cursorX = -totalWidth / 2 + (trailingSpace - leadingSpace) / 2;
     widths.forEach((characterWidth, characterIndex) => {
       const characterText = group!.children.find(
         child => child.name === `${CHAR_NAME_PREFIX}${characterIndex}`
       ) as PIXI.Text | undefined;
       if (characterText) {
-        characterText.position.set(cursorX + characterWidth / 2, 0);
+        const offset = charOffsets?.[characterIndex];
+        characterText.position.set(offset ? offset.x : cursorX + characterWidth / 2, offset ? offset.y : 0);
+        // スペースは描画しない（範囲計算やマスクに余白が含まれないようにする）。
+        characterText.visible = !isSpace(characterIndex);
         characterText.scale.set(1);
         characterText.skew.set(0);
         characterText.rotation = 0;
