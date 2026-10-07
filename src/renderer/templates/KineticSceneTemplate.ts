@@ -52,6 +52,10 @@ const KARAOKE_FILL_NAME = 'kinetic-karaoke-fill';
 const KARAOKE_MASK_NAME = 'kinetic-karaoke-mask';
 /** 半角・全角スペースなど、改行候補・行端で詰める対象とする空白文字。 */
 const WHITESPACE_PATTERN = /\s/u;
+/** 行頭禁則: 閉じ括弧・句読点・中点・感嘆符／疑問符・長音・繰り返し記号・小書きの仮名・三点リーダーなど。 */
+const LINE_START_PROHIBITED_PATTERN = /^[、。，．,.・：；:;？！?!‼⁇⁈⁉ー‐゠–〜～）)］\]｝}」』】〉》〕〙〗〟’”»ゝゞヽヾ々〻ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰ-ㇿ…‥]$/u;
+/** 行末禁則: 開き括弧・開き引用符など。 */
+const LINE_END_PROHIBITED_PATTERN = /^[（(［[｛{「『【〈《〔〘〖〝‘“«]$/u;
 
 /** スペースで区切られた文字のまとまり。separation は直前のトークンとの間隔（スペース＋単語間隔）。 */
 interface PhraseFlowToken {
@@ -60,8 +64,11 @@ interface PhraseFlowToken {
   charWidths: number[];
   width: number;
   separation: number;
+  /** このトークンの手前で改行できるか（禁則処理済み）。 */
   breakable: boolean;
   spaceBefore: boolean;
+  /** 表示される文字列（スペースを除く）。禁則処理の判定に使う。 */
+  text: string;
 }
 
 interface PhraseFlowPlacement {
@@ -495,7 +502,7 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       const wordText = words[wordIndex]?.word ?? (wordIndex === currentIndex ? currentText : undefined);
       if (wordText === undefined) {
         // 単語データが無い場合は 1 文字分の仮トークンで位置だけ確保する。
-        tokens.push({ word: wordIndex, chars: [], charWidths: [], width: fontSize, separation: tokens.length > 0 ? gap + pendingSpace : 0, breakable: tokens.length > 0, spaceBefore: pendingSpace > 0 });
+        tokens.push({ word: wordIndex, chars: [], charWidths: [], width: fontSize, separation: tokens.length > 0 ? gap + pendingSpace : 0, breakable: tokens.length > 0, spaceBefore: pendingSpace > 0, text: '' });
         pendingSpace = 0;
         continue;
       }
@@ -516,7 +523,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
             width: 0,
             separation: tokens.length > 0 ? (pendingSpace > 0 ? gap + pendingSpace : wordBoundary ? gap : 0) : 0,
             breakable: tokens.length > 0,
-            spaceBefore: pendingSpace > 0
+            spaceBefore: pendingSpace > 0,
+            text: ''
           };
           tokens.push(current);
           pendingSpace = 0;
@@ -526,6 +534,21 @@ export class KineticSceneTemplate implements IAnimationTemplate {
         current.chars.push(characterIndex);
         current.charWidths.push(characterWidth);
         current.width += characterWidth;
+        current.text += character;
+      });
+    }
+
+    // 禁則処理: 行頭に置けない約物で始まるトークンの手前、行末に置けない約物で終わるトークンの直後では改行しない。
+    // 禁則を守ると改行できる位置が一つも無くなる場合は、禁則を無視して従来どおり改行を許可する。
+    const allowedByKinsoku = (tokenIndex: number) => {
+      const head = Array.from(tokens[tokenIndex].text)[0] ?? '';
+      const tail = Array.from(tokens[tokenIndex - 1].text).pop() ?? '';
+      return !LINE_START_PROHIBITED_PATTERN.test(head) && !LINE_END_PROHIBITED_PATTERN.test(tail);
+    };
+    const kinsokuBreaks = tokens.map((_, tokenIndex) => tokenIndex > 0 && allowedByKinsoku(tokenIndex));
+    if (kinsokuBreaks.some(Boolean)) {
+      tokens.forEach((token, tokenIndex) => {
+        token.breakable = kinsokuBreaks[tokenIndex];
       });
     }
     return tokens;
@@ -661,9 +684,9 @@ export class KineticSceneTemplate implements IAnimationTemplate {
       );
       // スペースがある場合はスペース位置での改行を優先し、それより大幅に大きく表示できるときだけ単語境界でも改行する。
       const anyBoundary = this.breakPhraseTokens(tokens, tokenIndex => tokens[tokenIndex].breakable, scaleFor, tokens.length);
-      const hasSpaces = tokens.some((token, tokenIndex) => tokenIndex > 0 && token.spaceBefore);
+      const hasSpaces = tokens.some((token, tokenIndex) => tokenIndex > 0 && token.spaceBefore && token.breakable);
       const atSpaces = hasSpaces
-        ? this.breakPhraseTokens(tokens, tokenIndex => tokens[tokenIndex].spaceBefore, scaleFor, tokens.length)
+        ? this.breakPhraseTokens(tokens, tokenIndex => tokens[tokenIndex].spaceBefore && tokens[tokenIndex].breakable, scaleFor, tokens.length)
         : anyBoundary;
       const plan = anyBoundary.scale > atSpaces.scale * 1.15 ? anyBoundary : atSpaces;
       breaks = plan.breaks;
