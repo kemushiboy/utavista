@@ -571,8 +571,8 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   }
 
   /**
-   * 縦積みレイアウト。単語を1行ずつ縦に並べ、画面の高さ・幅に収まるよう全体を縮小する。
-   * 単語が多く大きく縮む場合は、文字を大きく保てるときだけ 2〜3 列に折り返す（左の列から順に）。
+   * 縦積みレイアウト。単語を1列に1行ずつ縦に並べ、画面の高さ・幅に収まるよう全体を縮小する。
+   * 縦書きとして読む順序を崩さないよう、列には折り返さない。
    */
   private calculateVerticalWordLayout(
     params: Record<string, unknown>,
@@ -585,38 +585,12 @@ export class KineticSceneTemplate implements IAnimationTemplate {
   ): { x: number; y: number; rotation: number; scale: number } {
     const widths = this.measurePhraseWordWidths(params, total, fontSize);
     const rowPitch = fontSize * (1.1 + 0.35 * Math.max(0.35, spacing));
-    const columnGap = fontSize * (0.6 + 0.6 * Math.max(0.35, spacing));
-    const maxScale = 1.15;
-
-    const planFor = (columns: number) => {
-      const rows = Math.ceil(total / columns);
-      const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(
-        fontSize * 0.5,
-        ...widths.slice(column * rows, Math.min(total, (column + 1) * rows))
-      ));
-      const usedColumns = Math.ceil(total / rows);
-      const blockWidth = columnWidths.slice(0, usedColumns).reduce((sum, width) => sum + width, 0)
-        + columnGap * Math.max(0, usedColumns - 1);
-      const blockHeight = rows * rowPitch;
-      const scale = Math.min(maxScale, stageWidth * 0.88 / blockWidth, stageHeight * 0.86 / blockHeight);
-      return { rows, usedColumns, columnWidths, blockWidth, scale };
-    };
-
-    // 1列を基本にし、列を増やすと 10% 以上大きく表示できる場合だけ折り返す。
-    let plan = planFor(1);
-    for (let columns = 2; columns <= Math.min(3, total); columns += 1) {
-      const candidate = planFor(columns);
-      if (candidate.scale > plan.scale * 1.1) plan = candidate;
-    }
-
-    const scale = Math.max(0.2, plan.scale);
-    const column = Math.floor(index / plan.rows);
-    const row = index % plan.rows;
-    const rowsInColumn = Math.min(plan.rows, total - column * plan.rows);
-    const columnLeft = plan.columnWidths.slice(0, column).reduce((sum, width) => sum + width, 0) + columnGap * column;
+    const blockWidth = Math.max(fontSize * 0.5, ...widths);
+    const blockHeight = total * rowPitch;
+    const scale = Math.max(0.2, Math.min(1.15, stageWidth * 0.88 / blockWidth, stageHeight * 0.86 / blockHeight));
     return {
-      x: (-plan.blockWidth / 2 + columnLeft + plan.columnWidths[column] / 2) * scale,
-      y: (row - (rowsInColumn - 1) / 2) * rowPitch * scale,
+      x: 0,
+      y: (index - (total - 1) / 2) * rowPitch * scale,
       rotation: 0,
       scale
     };
