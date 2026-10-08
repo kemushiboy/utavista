@@ -289,13 +289,20 @@
 }
 
 .panel-content { 
-  padding: var(--space-sm); 
+  padding: var(--space-md); 
   background: var(--bg-level-0); 
   color: var(--text-secondary); 
   height: calc(100% - 40px);
   overflow-y: auto;
   font-family: var(--font-primary);
   font-size: var(--text-body);
+}
+
+/* タブ内に埋め込んだパネル（ビート検出など）は外側の余白・スクロールを使う */
+.panel-content .panel-content {
+  padding: 0;
+  height: auto;
+  overflow: visible;
 }
 
 .tab-panels {

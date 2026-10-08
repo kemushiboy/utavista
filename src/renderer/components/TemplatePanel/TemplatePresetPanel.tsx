@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { TemplatePreset, TemplatePresetService } from '../../services/TemplatePresetService';
 import type { ParamConfig } from '../ParamEditor/ParamEditor';
+import { Button } from '../common';
 import './TemplatePresetPanel.css';
 
 interface TemplatePresetPanelProps {
@@ -81,76 +82,85 @@ const TemplatePresetPanel: React.FC<TemplatePresetPanelProps> = ({
   };
 
   return (
-    <div className="template-preset-panel">
+    <div className="common-section template-preset-panel">
       <div className="template-preset-heading">
-        <h4>シーン設定プリセット</h4>
+        <h3 className="common-section-title">シーン設定プリセット</h3>
         <span>{presets.length}件</span>
       </div>
       <p>現在の設定に名前を付けて保存し、別のプロジェクトやフレーズでも再利用できます。</p>
 
-      <label className="template-preset-label">
-        保存名
-        <input
-          type="text"
-          value={name}
-          onChange={event => setName(event.target.value)}
-          placeholder="例: サビ用・強いスラム"
-        />
-      </label>
+      {/* 保存済みプリセットを選んで使う */}
+      <div className="template-preset-group">
+        <label className="template-preset-label">
+          保存済みプリセット
+          <select
+            value={selectedId}
+            onChange={event => {
+              const nextId = event.target.value;
+              const preset = presets.find(item => item.id === nextId);
+              setSelectedId(nextId);
+              setName(preset?.name || '');
+              setMessage('');
+            }}
+          >
+            <option value="">選択してください</option>
+            {builtInPresets.length > 0 && (
+              <optgroup label="内蔵バリエーション">
+                {builtInPresets.map(preset => (
+                  <option key={preset.id} value={preset.id}>{preset.name}</option>
+                ))}
+              </optgroup>
+            )}
+            {userPresets.length > 0 && (
+              <optgroup label="ユーザープリセット">
+                {userPresets.map(preset => (
+                  <option key={preset.id} value={preset.id}>{preset.name}</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </label>
 
-      <label className="template-preset-label">
-        保存済みプリセット
-        <select
-          value={selectedId}
-          onChange={event => {
-            const nextId = event.target.value;
-            const preset = presets.find(item => item.id === nextId);
-            setSelectedId(nextId);
-            setName(preset?.name || '');
-            setMessage('');
-          }}
-        >
-          <option value="">選択してください</option>
-          {builtInPresets.length > 0 && (
-            <optgroup label="内蔵バリエーション">
-              {builtInPresets.map(preset => (
-                <option key={preset.id} value={preset.id}>{preset.name}</option>
-              ))}
-            </optgroup>
-          )}
-          {userPresets.length > 0 && (
-            <optgroup label="ユーザープリセット">
-              {userPresets.map(preset => (
-                <option key={preset.id} value={preset.id}>{preset.name}</option>
-              ))}
-            </optgroup>
-          )}
-        </select>
-      </label>
+        {selectedPreset?.description && (
+          <div className="template-preset-description">
+            <strong>{selectedPreset.builtIn ? '内蔵バリエーション' : 'プリセット'}</strong>
+            <span>{selectedPreset.description}</span>
+            {selectedPreset.referenceUrl && (
+              <a href={selectedPreset.referenceUrl} target="_blank" rel="noreferrer">参考実装を開く</a>
+            )}
+          </div>
+        )}
 
-      {selectedPreset?.description && (
-        <div className="template-preset-description">
-          <strong>{selectedPreset.builtIn ? '内蔵バリエーション' : 'プリセット'}</strong>
-          <span>{selectedPreset.description}</span>
-          {selectedPreset.referenceUrl && (
-            <a href={selectedPreset.referenceUrl} target="_blank" rel="noreferrer">参考実装を開く</a>
-          )}
+        <div className="template-preset-actions">
+          <Button variant="primary" onClick={applyPreset} disabled={!selectedPreset}>
+            適用
+          </Button>
+          <Button variant="danger-outline" onClick={deletePreset} disabled={!selectedPreset || selectedPreset.builtIn}>
+            削除
+          </Button>
         </div>
-      )}
+      </div>
 
-      <div className="template-preset-actions">
-        <button type="button" onClick={() => savePreset(false)} disabled={!name.trim()}>
-          新規保存
-        </button>
-        <button type="button" onClick={() => savePreset(true)} disabled={!selectedPreset || selectedPreset.builtIn || !name.trim()}>
-          上書き
-        </button>
-        <button type="button" onClick={applyPreset} disabled={!selectedPreset}>
-          適用
-        </button>
-        <button type="button" className="danger" onClick={deletePreset} disabled={!selectedPreset || selectedPreset.builtIn}>
-          削除
-        </button>
+      {/* 現在の設定を保存する */}
+      <div className="template-preset-group">
+        <label className="template-preset-label">
+          保存名
+          <input
+            type="text"
+            value={name}
+            onChange={event => setName(event.target.value)}
+            placeholder="例: サビ用・強いスラム"
+          />
+        </label>
+
+        <div className="template-preset-actions">
+          <Button onClick={() => savePreset(false)} disabled={!name.trim()}>
+            新規保存
+          </Button>
+          <Button onClick={() => savePreset(true)} disabled={!selectedPreset || selectedPreset.builtIn || !name.trim()}>
+            上書き
+          </Button>
+        </div>
       </div>
 
       {message && <div className="template-preset-message">{message}</div>}

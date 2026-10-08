@@ -150,9 +150,10 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
       {/* プロジェクト管理セクション */}
       <Section title="プロジェクト管理">
         <div className="project-actions">
-          <Button 
-            variant="success"
-            onClick={handleSave} 
+          <Button
+            variant="primary"
+            className="project-actions-main"
+            onClick={handleSave}
             disabled={isLoading}
           >
             保存 (Ctrl+S)
@@ -164,8 +165,8 @@ const ProjectTab: React.FC<ProjectTabProps> = ({ engine }) => {
           >
             別名で保存 (Ctrl+Shift+S)
           </Button>
-          <Button 
-            variant="info"
+          <Button
+            variant="secondary"
             onClick={handleOpen}
             disabled={isLoading}
           >

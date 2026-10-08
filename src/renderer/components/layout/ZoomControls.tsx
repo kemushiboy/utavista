@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import '../../styles/components.css';
 import Engine from '../../engine/Engine';
+import { Button } from '../common';
 
 interface ZoomControlsProps {
   zoomLevel: number;
@@ -85,94 +86,31 @@ const ZoomControls: React.FC<ZoomControlsProps> = ({
         <div>/ {formatTime(totalDuration)}</div>
       </div>
       
-      {/* Undo/Redoボタン */}
-      <div style={{
-        display: 'flex',
-        gap: '4px'
-      }}>
-        <button 
-          onClick={handleUndo}
-          disabled={!engine || !engine.canUndo()}
-          style={{
-            padding: '4px 8px',
-            background: (!engine || !engine.canUndo()) ? '#555' : '#28a745',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '11px',
-            cursor: (!engine || !engine.canUndo()) ? 'not-allowed' : 'pointer',
-            minWidth: '50px'
-          }}
-          title="元に戻す (Undo)"
-        >
+      {/* Undo/Redoボタン（補助操作のため共通の灰色ボタン） */}
+      <div style={{ display: 'flex', gap: '4px' }}>
+        <Button size="small" onClick={handleUndo} disabled={!engine || !engine.canUndo()} title="元に戻す (Undo)">
           ↶ 戻す
-        </button>
-        <button 
-          onClick={handleRedo}
-          disabled={!engine || !engine.canRedo()}
-          style={{
-            padding: '4px 8px',
-            background: (!engine || !engine.canRedo()) ? '#555' : '#ffc107',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '11px',
-            cursor: (!engine || !engine.canRedo()) ? 'not-allowed' : 'pointer',
-            minWidth: '50px'
-          }}
-          title="やり直し (Redo)"
-        >
+        </Button>
+        <Button size="small" onClick={handleRedo} disabled={!engine || !engine.canRedo()} title="やり直し (Redo)">
           ↷ やり直し
-        </button>
+        </Button>
       </div>
-      
+
       {/* ズームコントロールボタン */}
-      <div style={{
-        display: 'flex',
-        gap: '4px'
-      }}>
-        <button 
-          onClick={onZoomIn}
-          disabled={zoomLevel === 0}
-          style={{
-            padding: '4px 8px',
-            background: zoomLevel === 0 ? '#555' : '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '14px',
-            cursor: zoomLevel === 0 ? 'not-allowed' : 'pointer',
-            minWidth: '50px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-          title="より詳細に表示"
-        >
+      <div style={{ display: 'flex', gap: '4px' }}>
+        <Button size="small" onClick={onZoomIn} disabled={zoomLevel === 0} title="より詳細に表示">
           🔍+
-        </button>
-        <button 
+        </Button>
+        <Button
+          size="small"
           onClick={onZoomOut}
           disabled={zoomLevel === maxZoomLevel || Math.min(zoomLevels[zoomLevel + 1] || Infinity, totalDuration) <= (viewEnd - viewStart)}
-          style={{
-            padding: '4px 8px',
-            background: (zoomLevel === maxZoomLevel || Math.min(zoomLevels[zoomLevel + 1] || Infinity, totalDuration) <= (viewEnd - viewStart)) ? '#555' : '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '14px',
-            cursor: (zoomLevel === maxZoomLevel || Math.min(zoomLevels[zoomLevel + 1] || Infinity, totalDuration) <= (viewEnd - viewStart)) ? 'not-allowed' : 'pointer',
-            minWidth: '50px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
           title="より広く表示"
         >
           🔍−
-        </button>
+        </Button>
       </div>
-      
+
       <div style={{ 
         color: '#666', 
         fontSize: '9px',

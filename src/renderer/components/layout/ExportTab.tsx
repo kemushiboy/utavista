@@ -273,7 +273,6 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
     detectBackgroundVideoFps();
   }, [engine]); // engineが変更された時のみ実行
 
-
   // 実際のエクスポート処理（透過背景はProRes 4444、それ以外はロックステップ）
   const handleExport = async () => {
     if (engine.isBackgroundTransparent()) {
@@ -614,22 +613,9 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
       {/* 動画出力セクション */}
       <Section title="動画出力">
         <div className="export-settings">
-          {/* アスペクト比設定（読み取り専用） */}
-          <Select 
-            label="アスペクト比 (コンテンツタブで設定):"
-            value={getCurrentAspectRatio()} 
-            disabled
-          >
-            {aspectRatioOptions.map(option => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-
           {/* 長辺解像度設定 */}
           <Select 
-            label="長辺解像度:"
+            label="長辺解像度"
             value={longSideResolution} 
             onChange={(e) => setLongSideResolution(parseInt(e.target.value) as LongSideResolution)}
           >
@@ -640,6 +626,19 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
             ))}
           </Select>
 
+          {/* 出力サイズ（アスペクト比はコンテンツタブの設定に従う） */}
+          <div className="resolution-display">
+            <div className="resolution-row">
+              <span>出力サイズ</span>
+              <span className="resolution-value">
+                {getCurrentResolution().width} × {getCurrentResolution().height}
+              </span>
+            </div>
+            <span className="resolution-note">
+              {aspectRatioOptions.find(option => option.value === getCurrentAspectRatio())?.label}・コンテンツタブで変更
+            </span>
+          </div>
+
           {isTransparentBackground && (
             <div className="export-info-note u-mb-sm">
               背景が「透過」のため、アルファチャンネル付きの ProRes 4444（.mov）で出力します。
@@ -649,7 +648,7 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
 
           {/* 品質設定（CRF） */}
           <Select
-            label="動画品質 (CRF値):"
+            label="動画品質 (CRF値)"
             value={videoQuality}
             disabled={isTransparentBackground}
             onChange={(e) => setVideoQuality(e.target.value as VideoQualityCRF)}
@@ -663,7 +662,7 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
 
           {/* FPS設定 */}
           <Select 
-            label="フレームレート:"
+            label="フレームレート"
             value={fps} 
             onChange={(e) => setFps(parseInt(e.target.value) as 24 | 30 | 60)}
           >
@@ -698,7 +697,7 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
           <div className="time-range-settings">
             <div className="time-input-container">
               <Input
-                label="開始時間:"
+                label="開始時間"
                 type="text"
                 value={startTimeInput}
                 onChange={(e) => setStartTimeInput(e.target.value)}
@@ -708,7 +707,7 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
               />
               <span className="u-text-muted">～</span>
               <Input
-                label="終了時間:"
+                label="終了時間"
                 type="text"
                 value={endTimeInput}
                 onChange={(e) => setEndTimeInput(e.target.value)}
@@ -729,14 +728,6 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
               />
               楽曲を含める
             </label>
-          </div>
-
-          {/* 解像度表示 */}
-          <div className="resolution-display">
-            <span>実際の解像度:</span>
-            <span className="resolution-value">
-              {getCurrentResolution().width} × {getCurrentResolution().height}
-            </span>
           </div>
 
           {/* エクスポート進捗（ボタンの上へ移動） */}
@@ -767,7 +758,7 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
           )}
 
           {/* エクスポートボタン（進捗の下に配置） */}
-          <div className="u-mt-lg">
+          <div>
             {!isExporting && !isTransparentBackground && webcodecsUnsupportedMsg && (
               <div className="export-warning u-mb-sm">{webcodecsUnsupportedMsg}</div>
             )}
@@ -813,8 +804,6 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
         </div>
       </Section>
 
-      <hr className="u-divider" />
-
       <Section title="静止画（PNG）出力">
         <div className="image-export-settings">
           <p>タイムラインの現在位置を、背景・文字・共通Post FXを合成した1枚のPNGとして書き出します。</p>
@@ -836,8 +825,6 @@ const ExportTab: React.FC<ExportTabProps> = ({ engine }) => {
           )}
         </div>
       </Section>
-
-      <hr className="u-divider" />
 
       <Section title="字幕（SRT）出力">
         <div className="subtitle-export-settings">

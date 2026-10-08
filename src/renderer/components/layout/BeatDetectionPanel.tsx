@@ -164,15 +164,15 @@ const BeatDetectionPanel: React.FC<BeatDetectionPanelProps> = ({ engine }) => {
 
         {/* プリセット設定 */}
         <div className="u-mb-md">
-          <label className="u-text-secondary u-mb-xs">プリセット設定:</label>
+          <label className="u-text-secondary u-mb-xs">プリセット</label>
           <div className="u-flex u-gap-sm">
-            <Button variant="tertiary" onClick={() => applyPreset('sensitive')}>
+            <Button variant="secondary" onClick={() => applyPreset('sensitive')}>
               高感度
             </Button>
-            <Button variant="tertiary" onClick={() => applyPreset('standard')}>
+            <Button variant="secondary" onClick={() => applyPreset('standard')}>
               標準
             </Button>
-            <Button variant="tertiary" onClick={() => applyPreset('strict')}>
+            <Button variant="secondary" onClick={() => applyPreset('strict')}>
               厳格
             </Button>
           </div>
