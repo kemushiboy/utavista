@@ -427,8 +427,15 @@ export function setupExportHandlers() {
 
   // 透過背景の書き出し（ProRes 4444）。RGBAフレームをFFmpegへ直接流す。
   const alphaVideoExporter = new AlphaVideoExporter();
+  // 書き出し先（上書き・失敗時の削除対象）は、保存ダイアログでユーザーが選んだパスに限る。
+  // レンダラーから任意のパスを指定してファイルを上書き・削除できないようにするため。
+  const approvedAlphaOutputPaths = new Set<string>();
   ipcMain.handle('export:alpha:start', async (_event, options: AlphaExportStartOptions) => {
-    alphaVideoExporter.start(options);
+    const outputPath = typeof options?.outputPath === 'string' ? path.resolve(options.outputPath) : '';
+    if (!approvedAlphaOutputPaths.delete(outputPath)) {
+      throw new Error('透過動画の保存先が保存ダイアログで選択されたものではありません');
+    }
+    alphaVideoExporter.start({ ...options, outputPath });
   });
   ipcMain.handle('export:alpha:frame', async (_event, payload: { sessionId: string; data: Uint8Array }) => {
     await alphaVideoExporter.writeFrame(payload.sessionId, payload.data);
@@ -449,7 +456,9 @@ export function setupExportHandlers() {
         { name: 'All Files', extensions: ['*'] }
       ]
     });
-    return filePath || null;
+    if (!filePath) return null;
+    approvedAlphaOutputPaths.add(path.resolve(filePath));
+    return filePath;
   });
 
   ipcMain.handle('export:saveFrameImage', async (event, sessionId: string, frameName: string, frameData: Uint8Array, width?: number, height?: number) => {
