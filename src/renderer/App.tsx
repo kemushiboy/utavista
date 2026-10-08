@@ -8,7 +8,8 @@ import { initializeLogging } from '../config/logging';
 import testLyricsData from './data/longTestLyrics.json';
 import { ParameterProcessor } from './utils/ParameterProcessor';
 import { ParameterRegistry } from './utils/ParameterRegistry';
-import { ProjectFileManager } from './services/ProjectFileManager';
+import { ProjectFileManager, PROJECT_LOAD_SETTLE_MS } from './services/ProjectFileManager';
+import { hasUnsavedChanges, markProjectClean } from './services/ProjectDirtyTracker';
 import './App.css';
 
 // Initialize logging configuration
@@ -396,6 +397,37 @@ function App() {
     };
   }, [fontServiceReady]); // FontService初期化完了後に実行
 
+  // 未保存の変更の判定と、終了前の確認（メインプロセスからの問い合わせ）への応答。
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engineReady || !engine) return;
+    const fingerprint = () => new ProjectFileManager(engine).getContentFingerprint();
+
+    // 起動時の自動復元などが落ち着いてから、その内容を未保存判定の基準にする。
+    markProjectClean(fingerprint, PROJECT_LOAD_SETTLE_MS);
+    const handleStateRestored = () => markProjectClean(fingerprint, PROJECT_LOAD_SETTLE_MS);
+    window.addEventListener('project-state-restored', handleStateRestored);
+
+    const api = window.electronAPI;
+    const removeQuery = api?.onUnsavedChangesQuery?.(() => hasUnsavedChanges(fingerprint));
+    const removeSave = api?.onSaveBeforeClose?.(async () => {
+      try {
+        await new ProjectFileManager(engine).saveProject('project');
+        return true;
+      } catch (error) {
+        // 保存ダイアログのキャンセルもここに来る。終了は中止する。
+        console.warn('[App] 終了前の保存を中止しました:', error);
+        return false;
+      }
+    });
+
+    return () => {
+      window.removeEventListener('project-state-restored', handleStateRestored);
+      removeQuery?.();
+      removeSave?.();
+    };
+  }, [engineReady]);
+
   // Windowsの関連付けや「プログラムから開く」で渡された.utaを、Engine準備後に読み込む。
   useEffect(() => {
     if (!engineReady || !engineRef.current) return;
@@ -408,6 +440,8 @@ function App() {
       if (disposed || externalProjectLoadInProgressRef.current || !engineRef.current) return;
       externalProjectLoadInProgressRef.current = true;
       try {
+        // 起動時の自動復元が後から終わると、読み込んだ .uta が自動保存の内容で上書きされるため先に待つ。
+        await engineRef.current.whenAutoRestoreSettled();
         while (!disposed && engineRef.current) {
           const projectData = await electronAPI.consumePendingProject();
           if (!projectData || disposed || !engineRef.current) break;

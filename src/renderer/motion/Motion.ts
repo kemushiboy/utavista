@@ -22,6 +22,13 @@ export interface MotionState {
   alpha: number;
   skewX: number;
   skewY: number;
+  /** ガウスぼかし半径(px)。合成時は加算。 */
+  blur: number;
+  /** 各辺から隠す割合(0〜1)。マスク開閉に使い、合成時は加算。 */
+  clipTop: number;
+  clipBottom: number;
+  clipLeft: number;
+  clipRight: number;
 }
 
 export interface MotionContext {
@@ -29,6 +36,8 @@ export interface MotionContext {
   index: number;
   total: number;
   intensity: number;
+  /** 動かす要素のおおよその幅(px)。端を回転軸にする動きなどで使う。 */
+  width?: number;
 }
 
 export interface MotionClip {
@@ -44,7 +53,12 @@ export const IDENTITY_MOTION: MotionState = {
   rotation: 0,
   alpha: 1,
   skewX: 0,
-  skewY: 0
+  skewY: 0,
+  blur: 0,
+  clipTop: 0,
+  clipBottom: 0,
+  clipLeft: 0,
+  clipRight: 0
 };
 
 const easingFunctions: Record<EasingName, (value: number) => number> = {
@@ -90,7 +104,12 @@ export function combineMotionStates(...states: MotionState[]): MotionState {
     rotation: combined.rotation + state.rotation,
     alpha: combined.alpha * state.alpha,
     skewX: combined.skewX + state.skewX,
-    skewY: combined.skewY + state.skewY
+    skewY: combined.skewY + state.skewY,
+    blur: combined.blur + state.blur,
+    clipTop: combined.clipTop + state.clipTop,
+    clipBottom: combined.clipBottom + state.clipBottom,
+    clipLeft: combined.clipLeft + state.clipLeft,
+    clipRight: combined.clipRight + state.clipRight
   }), { ...IDENTITY_MOTION });
 }
 

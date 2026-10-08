@@ -120,18 +120,7 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
   const canEditPreset = mode === 'global' || targetIds.length > 0;
 
   return (
-    <div className="template-tab scene-settings-tab">
-      <h2>シーン設定</h2>
-
-      {canEditPreset && (
-        <TemplatePresetPanel
-          templateId={FIXED_TEMPLATE_ID}
-          params={presetParams}
-          paramConfig={paramConfig}
-          onApply={applyPreset}
-        />
-      )}
-
+    <div className="panel-content scene-settings-tab">
       <div className="editor-mode-switch">
         <div className="switch-container">
           <button className={`mode-button ${mode === 'global' ? 'active' : ''}`} onClick={() => setMode('global')}>
@@ -146,6 +135,15 @@ const SceneSettingsTab: React.FC<SceneSettingsTabProps> = ({ engine }) => {
           </button>
         </div>
       </div>
+
+      {canEditPreset && (
+        <TemplatePresetPanel
+          templateId={FIXED_TEMPLATE_ID}
+          params={presetParams}
+          paramConfig={paramConfig}
+          onApply={applyPreset}
+        />
+      )}
 
       {mode === 'global' && (
         <>

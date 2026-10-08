@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useRef, useMemo } from 'react';
 import HierarchicalMarker from '../timeline/HierarchicalMarker';
 import WaveformPanel from './WaveformPanel';
 import BeatMarkers from '../timeline/BeatMarkers';
@@ -23,6 +23,8 @@ interface TimelinePanelProps {
   viewStart?: number;
   viewDuration?: number;
   zoomLevel?: number;
+  /** Ctrl+ホイール／ピンチで拡大縮小する。factor>1で縮小。anchorTime が表示幅の anchorRatio の位置に留まる。 */
+  onWheelZoom?: (factor: number, anchorTime: number, anchorRatio: number) => void;
   viewportManager?: ViewportManager;
 }
 
@@ -34,7 +36,8 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
   viewStart: externalViewStart,
   viewDuration: externalViewDuration,
   viewportManager,
-  zoomLevel: externalZoomLevel
+  zoomLevel: externalZoomLevel,
+  onWheelZoom
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const timelineAreaRef = useRef<HTMLDivElement>(null);
@@ -122,20 +125,47 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
   const timelineWidth = Math.max(width, duration / msPerPixel);
   
   // viewStartが変更されたときに実際のスクロール位置を更新
-  useEffect(() => {
+  // 描画と同時にスクロール位置を合わせる（遅れると、連続したホイール操作で基準位置がずれる）
+  const previousMsPerPixelRef = useRef(msPerPixel);
+  useLayoutEffect(() => {
     if (timelineAreaRef.current && externalViewStart !== undefined && msPerPixel > 0) {
       // viewStartをピクセル位置に変換
       const scrollPosition = externalViewStart / msPerPixel;
-      
-      // スクロール位置を設定（スムーズスクロール）
+      // 拡大縮小で縮尺が変わったときは、基準位置がずれないよう即座に合わせる。それ以外はスムーズスクロール。
+      const zoomChanged = previousMsPerPixelRef.current !== msPerPixel;
+      previousMsPerPixelRef.current = msPerPixel;
+
       if (Math.abs(timelineAreaRef.current.scrollLeft - scrollPosition) > 1) {
         timelineAreaRef.current.scrollTo({
           left: scrollPosition,
-          behavior: 'smooth'
+          behavior: zoomChanged ? 'auto' : 'smooth'
         });
       }
     }
   }, [externalViewStart, msPerPixel]);
+
+  // Ctrl+ホイール（トラックパッドのピンチ操作を含む）で、マウス位置を基準に連続的に拡大縮小する。
+  // ブラウザ既定のページ拡大を止めるため、passive: false で登録する。
+  const wheelZoomRef = useRef({ onWheelZoom, msPerPixel, width });
+  wheelZoomRef.current = { onWheelZoom, msPerPixel, width };
+  useEffect(() => {
+    const area = timelineAreaRef.current;
+    if (!area) return;
+    const handleWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const { onWheelZoom: zoom, msPerPixel: scale, width: viewWidth } = wheelZoomRef.current;
+      if (!zoom || !(scale > 0) || !(viewWidth > 0)) return;
+      event.preventDefault();
+      const rect = area.getBoundingClientRect();
+      const x = Math.min(Math.max(0, event.clientX - rect.left), viewWidth);
+      const anchorTime = (area.scrollLeft + x) * scale;
+      // 行単位・ページ単位のスクロール量をピクセル相当にそろえる
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewWidth : 1);
+      zoom(Math.exp(delta * 0.0015), anchorTime, x / viewWidth);
+    };
+    area.addEventListener('wheel', handleWheel, { passive: false });
+    return () => area.removeEventListener('wheel', handleWheel);
+  }, []);
 
   const commitTimelineEdit = () => {
     engine?.saveUndoState('タイムライン編集');
@@ -956,18 +986,20 @@ const TimelinePanel: React.FC<TimelinePanelProps> = ({
 
   // リサイズ監視
   useEffect(() => {
-    if (!containerRef.current) return;
+    // 縮尺（ms/px）は、左側のラベル列を除いたスクロール領域の幅で計算する
+    const area = timelineAreaRef.current;
+    if (!area) return;
     
     const updateWidth = () => {
-      if (containerRef.current) {
-        setWidth(containerRef.current.clientWidth);
+      if (area.clientWidth > 0) {
+        setWidth(area.clientWidth);
       }
     };
     
     updateWidth();
     
     const observer = new ResizeObserver(updateWidth);
-    observer.observe(containerRef.current);
+    observer.observe(area);
     
     return () => observer.disconnect();
   }, []);

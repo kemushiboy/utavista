@@ -4,7 +4,7 @@ import { deterministicNoise } from './Motion';
 const EFFECT_PREFIX = 'kinetic-effect-';
 const TAU = Math.PI * 2;
 
-export type EmitterStyle = 'particles' | 'bubbles' | 'eyes' | 'noise';
+export type EmitterStyle = 'particles' | 'bubbles' | 'eyes' | 'noise' | 'speedLines';
 export type SurfaceShape = 'ribbon' | 'cylinder' | 'torus';
 
 export interface TypographyEffectParams {
@@ -32,15 +32,37 @@ export interface TypographyEffectParams {
   surfaceShape: SurfaceShape;
   surfaceCurve: number;
   surfaceRepeat: number;
+  variableWeightEnabled: boolean;
+  variableWeightDuration: number;
+  variableWeightSpacing: number;
+  kerningMotionEnabled: boolean;
+  kerningMotionAmount: number;
+  kerningMotionDuration: number;
+  baselineWaveEnabled: boolean;
+  baselineWaveOffset: number;
+  baselineWaveOvershoot: number;
+  baselineWaveDuration: number;
+  baselineWaveStagger: number;
+  impactOutlineEnabled: boolean;
+  impactOutlineSpread: number;
+  impactOutlineDuration: number;
+  impactOutlineThickness: number;
+  impactOutlineTrigger: 'word' | 'character';
+  emitterLineRate: number;
+  emitterLineWidth: number;
+  emitterInnerRadius: number;
 }
 
 export interface TypographyEffectContext {
   nowMs: number;
   startMs: number;
   phraseStartMs?: number;
+  effectStartMs?: number;
   seed: number;
   index: number;
   intensity: number;
+  /** 各文字の歌唱開始時刻（文字ごとに発動する効果で使う）。 */
+  characterStartsMs?: number[];
 }
 
 const fragmentShader = `
@@ -93,6 +115,16 @@ function smoothstep(value: number): number {
   return clamped * clamped * (3 - 2 * clamped);
 }
 
+/** 参照モーションの細→太→細→中太という1周期を、絶対時刻から評価する。 */
+export function sampleVariableWeightPulse(timeMs: number, durationMs: number): number {
+  const cycle = Math.max(1, durationMs);
+  const progress = ((Math.max(0, timeMs) % cycle) / cycle + 1) % 1;
+  if (progress < 0.3) return progress / 0.3;
+  if (progress < 0.6) return 1 - (progress - 0.3) / 0.3;
+  if (progress < 0.82) return ((progress - 0.6) / 0.22) * 0.65;
+  return 0.65;
+}
+
 function destroyDisplayObject(displayObject: PIXI.DisplayObject): void {
   if (displayObject.parent) displayObject.parent.removeChild(displayObject);
   displayObject.destroy({ children: true });
@@ -104,21 +136,11 @@ function clearByPrefix(container: PIXI.Container, prefix: string): void {
     .forEach(destroyDisplayObject);
 }
 
-function ensureClone(container: PIXI.Container, source: PIXI.Text, name: string): PIXI.Text {
-  let clone = container.children.find(child => child.name === name) as PIXI.Text | undefined;
-  if (!clone) {
-    clone = new PIXI.Text(source.text, source.style);
-    clone.name = name;
-    clone.anchor.set(0.5);
-    container.addChildAt(clone, Math.max(0, container.getChildIndex(source)));
-  }
-  clone.text = source.text;
-  clone.style = source.style;
-  clone.tint = source.tint;
-  return clone;
-}
-
-function syncTextGroup(target: PIXI.Container, source: PIXI.Container): void {
+/**
+ * 文字グループ（文字単位のText）を、位置・拡大率・回転などの現在値ごと複製先へ写す。
+ * カーニングやベースラインウェーブなど文字単位の動きを反映した見た目を複製できる。
+ */
+export function syncTextGroup(target: PIXI.Container, source: PIXI.Container): void {
   const sourceTexts = source.children.filter((child): child is PIXI.Text => child instanceof PIXI.Text);
 
   sourceTexts.forEach((sourceText, index) => {
@@ -201,11 +223,65 @@ export class TypographyEffects {
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
+    this.updateCharacterMotion(visualSource, params, context);
     this.updateWarpFilter(visualSource, params, context);
     this.updateRepetition(container, visualSource, params, context);
     this.updateDestruction(container, source, visualSource, params, context);
-    this.updateEmitters(container, source, params, context);
-    this.updateSurfaceCopies(container, source, params, context);
+    // 放出・曲面は、文字単位の動き（カーニング等）を反映した文字グループの現在の範囲を基準にする。
+    const visualBounds = visualSource.getLocalBounds();
+    this.updateEmitters(container, visualBounds, params, context);
+    this.updateSurfaceCopies(container, visualSource, visualBounds, params, context);
+    this.updateImpactOutline(container, visualSource, params, context);
+  }
+
+  /**
+   * 文字単位の変形を共通の基準座標へ加算する。
+   * updateCharacterText が毎フレーム基準座標へ戻すため、シーク順序やfpsに依存しない。
+   */
+  private updateCharacterMotion(
+    source: PIXI.Container,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext
+  ): void {
+    const characters = source.children.filter((child): child is PIXI.Text => child instanceof PIXI.Text);
+    const effectStartMs = context.effectStartMs ?? context.startMs;
+    const elapsedMs = context.nowMs - effectStartMs;
+    const centerIndex = (characters.length - 1) / 2;
+
+    let weightSpacing = 0;
+    if (params.variableWeightEnabled) {
+      const pulse = sampleVariableWeightPulse(elapsedMs, params.variableWeightDuration);
+      weightSpacing = params.variableWeightSpacing * (1 - pulse * 1.25) * context.intensity;
+    }
+
+    characters.forEach((character, characterIndex) => {
+      if (params.variableWeightEnabled) {
+        character.x += (characterIndex - centerIndex) * weightSpacing;
+      }
+
+      if (params.kerningMotionEnabled) {
+        const progress = smoothstep(elapsedMs / Math.max(1, params.kerningMotionDuration));
+        character.x += (characterIndex - centerIndex)
+          * params.kerningMotionAmount
+          * (1 - progress)
+          * context.intensity;
+      }
+
+      if (params.baselineWaveEnabled) {
+        const localElapsed = elapsedMs - characterIndex * params.baselineWaveStagger;
+        const progress = clamp01(localElapsed / Math.max(1, params.baselineWaveDuration));
+        let y = params.baselineWaveOffset;
+        if (progress >= 0.62) {
+          const settle = smoothstep((progress - 0.62) / 0.38);
+          y = -params.baselineWaveOvershoot * (1 - settle);
+        } else if (progress > 0) {
+          const rise = smoothstep(progress / 0.62);
+          y = params.baselineWaveOffset
+            + (-params.baselineWaveOvershoot - params.baselineWaveOffset) * rise;
+        }
+        character.y += y * context.intensity;
+      }
+    });
   }
 
   cleanup(container: PIXI.Container): void {
@@ -393,7 +469,7 @@ export class TypographyEffects {
 
   private updateEmitters(
     container: PIXI.Container,
-    source: PIXI.Text,
+    bounds: PIXI.Rectangle,
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
@@ -411,12 +487,17 @@ export class TypographyEffects {
         graphic.name = name;
         container.addChild(graphic);
       }
+      if (params.emitterStyle === 'speedLines') {
+        graphic.clear();
+        this.drawSpeedLine(graphic, bounds, params, context, particleIndex, count, elapsed);
+        continue;
+      }
       const base = context.seed + context.index * 997 + particleIndex * 73;
       const cycle = (elapsed / (900 + Math.abs(deterministicNoise(base)) * 1100) + particleIndex / count) % 1;
       const angle = deterministicNoise(base + 17) * Math.PI + cycle * TAU * 0.16;
       const radius = params.emitterRadius * (0.18 + cycle * 0.82) * context.intensity;
-      const x = Math.cos(angle) * radius + deterministicNoise(base + 29) * source.width * 0.36;
-      const y = Math.sin(angle) * radius + deterministicNoise(base + 37) * source.height * 0.45;
+      const x = bounds.x + bounds.width / 2 + Math.cos(angle) * radius + deterministicNoise(base + 29) * bounds.width * 0.36;
+      const y = bounds.y + bounds.height / 2 + Math.sin(angle) * radius + deterministicNoise(base + 37) * bounds.height * 0.45;
       const size = 2 + Math.abs(deterministicNoise(base + 41)) * 8;
       graphic.clear();
       this.drawEmitter(graphic, params.emitterStyle, size, base);
@@ -456,9 +537,141 @@ export class TypographyEffects {
     graphic.endFill();
   }
 
+  /**
+   * DOUBLE OUTLINE: 歌唱開始の瞬間、本体と同色の輪郭だけを外側へ拡散させて打撃感を出す。
+   * 輪郭は 2px から spread px まで広がり、α 0.8 から急速に消える。
+   */
+  private updateImpactOutline(
+    container: PIXI.Container,
+    visualSource: PIXI.Container,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext
+  ): void {
+    const duration = Math.max(1, params.impactOutlineDuration);
+    if (!params.impactOutlineEnabled) {
+      clearByPrefix(container, 'outline-');
+      return;
+    }
+    if (params.impactOutlineTrigger === 'character') {
+      clearByPrefix(container, 'outline-0');
+      this.updateCharacterOutlines(container, visualSource, params, context, duration);
+      return;
+    }
+    clearByPrefix(container, 'outline-chars');
+
+    const elapsed = context.nowMs - context.startMs;
+    if (elapsed < 0 || elapsed > duration) {
+      clearByPrefix(container, 'outline-0');
+      return;
+    }
+    const progress = elapsed / duration;
+    const clone = ensureGroupClone(container, visualSource, `${EFFECT_PREFIX}outline-0`);
+    clone.children.forEach(child => {
+      if (child instanceof PIXI.Text) child.style = this.getOutlineStyle(child.style as PIXI.TextStyle, params.impactOutlineThickness);
+    });
+    const offset = 2 + (params.impactOutlineSpread - 2) * smoothstep(Math.min(1, progress * 1.6)) * context.intensity;
+    const halfHeight = Math.max(1, visualSource.height / 2);
+    clone.scale.set(1 + offset / halfHeight);
+    clone.alpha = 0.8 * Math.pow(1 - progress, 2);
+  }
+
+  /** 文字ごとの歌唱開始時刻で、その文字だけの輪郭を拡散させる。 */
+  private updateCharacterOutlines(
+    container: PIXI.Container,
+    visualSource: PIXI.Container,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext,
+    duration: number
+  ): void {
+    const characters = visualSource.children.filter((child): child is PIXI.Text => child instanceof PIXI.Text);
+    const starts = context.characterStartsMs || [];
+    const active = characters
+      .map((character, characterIndex) => ({ character, elapsed: context.nowMs - (starts[characterIndex] ?? context.startMs) }))
+      .filter(entry => entry.elapsed >= 0 && entry.elapsed <= duration);
+    if (active.length === 0) {
+      clearByPrefix(container, 'outline-chars');
+      return;
+    }
+
+    const name = `${EFFECT_PREFIX}outline-chars`;
+    let group = container.children.find(child => child.name === name) as PIXI.Container | undefined;
+    if (!group) {
+      group = new PIXI.Container();
+      group.name = name;
+      container.addChildAt(group, Math.max(0, container.getChildIndex(visualSource)));
+    }
+    active.forEach(({ character, elapsed }, slot) => {
+      let outline = group!.children[slot] as PIXI.Text | undefined;
+      if (!outline) {
+        outline = new PIXI.Text(character.text);
+        outline.anchor.set(character.anchor.x, character.anchor.y);
+        group!.addChild(outline);
+      }
+      outline.text = character.text;
+      outline.style = this.getOutlineStyle(character.style as PIXI.TextStyle, params.impactOutlineThickness);
+      const progress = elapsed / duration;
+      const offset = 2 + (params.impactOutlineSpread - 2) * smoothstep(Math.min(1, progress * 1.6)) * context.intensity;
+      const halfHeight = Math.max(1, character.height / 2);
+      outline.position.set(character.x, character.y);
+      outline.rotation = character.rotation;
+      outline.scale.set(character.scale.x * (1 + offset / halfHeight), character.scale.y * (1 + offset / halfHeight));
+      outline.alpha = 0.8 * Math.pow(1 - progress, 2);
+    });
+    group.children.slice(active.length).forEach(destroyDisplayObject);
+  }
+
+  private readonly outlineStyles = new WeakMap<PIXI.TextStyle, Map<number, PIXI.TextStyle>>();
+
+  /** 塗りを抜いて本体色の線だけにした文字スタイル。元スタイルと太さ単位でキャッシュする。 */
+  private getOutlineStyle(style: PIXI.TextStyle, thickness: number): PIXI.TextStyle {
+    let byThickness = this.outlineStyles.get(style);
+    if (!byThickness) {
+      byThickness = new Map();
+      this.outlineStyles.set(style, byThickness);
+    }
+    const cached = byThickness.get(thickness);
+    if (cached) return cached;
+    const outline = style.clone();
+    outline.stroke = Array.isArray(style.fill) ? String(style.fill[0]) : String(style.fill);
+    outline.strokeThickness = Math.max(0.5, thickness);
+    outline.fill = 'rgba(0,0,0,0)';
+    outline.dropShadow = false;
+    byThickness.set(thickness, outline);
+    return outline;
+  }
+
+  /**
+   * SPEED LINES: 語を中心にした放射状の集中線。既定12fpsで線の位置と長さを引き直し、
+   * 滑らかに補間しないことで打撃的な速度感を出す。
+   */
+  private drawSpeedLine(
+    graphic: PIXI.Graphics,
+    bounds: PIXI.Rectangle,
+    params: TypographyEffectParams,
+    context: TypographyEffectContext,
+    lineIndex: number,
+    count: number,
+    elapsed: number
+  ): void {
+    const frame = Math.floor(elapsed / (1000 / Math.max(1, params.emitterLineRate)));
+    const base = context.seed + context.index * 997 + lineIndex * 73 + frame * 389;
+    const angle = (lineIndex / count) * TAU + deterministicNoise(base) * (Math.PI / count);
+    const inner = Math.max(bounds.width, bounds.height) * params.emitterInnerRadius
+      + Math.abs(deterministicNoise(base + 11)) * 24;
+    const length = params.emitterRadius * (0.4 + 0.6 * Math.abs(deterministicNoise(base + 13))) * context.intensity;
+    const thickness = params.emitterLineWidth * (0.3 + 0.7 * Math.abs(deterministicNoise(base + 17)));
+    graphic.beginFill(0xffffff, 0.85);
+    graphic.drawPolygon([inner, -thickness / 2, inner + length, 0, inner, thickness / 2]);
+    graphic.endFill();
+    graphic.position.set(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    graphic.rotation = angle;
+    graphic.alpha = deterministicNoise(base + 19) > -0.45 ? 0.75 : 0;
+  }
+
   private updateSurfaceCopies(
     container: PIXI.Container,
-    source: PIXI.Text,
+    visualSource: PIXI.Container,
+    bounds: PIXI.Rectangle,
     params: TypographyEffectParams,
     context: TypographyEffectContext
   ): void {
@@ -468,24 +681,28 @@ export class TypographyEffects {
     }
     const count = Math.max(2, Math.min(12, Math.round(params.surfaceRepeat * 2)));
     for (let copyIndex = 0; copyIndex < count; copyIndex += 1) {
-      const clone = ensureClone(container, source, `${EFFECT_PREFIX}surface-${copyIndex}`);
+      // 文字グループを写し、カーニングやベースラインウェーブ後の見た目を曲面に並べる。
+      const clone = ensureGroupClone(container, visualSource, `${EFFECT_PREFIX}surface-${copyIndex}`);
       const unit = copyIndex / Math.max(1, count - 1);
       const angle = unit * TAU + context.nowMs * 0.00035;
       if (params.surfaceShape === 'torus') {
-        clone.position.set(Math.sin(angle) * source.width * 0.42, Math.cos(angle) * source.height * 0.72);
+        clone.position.set(Math.sin(angle) * bounds.width * 0.42, Math.cos(angle) * bounds.height * 0.72);
         clone.scale.set(0.28 + (Math.cos(angle) + 1) * 0.18);
         clone.rotation = Math.sin(angle) * 0.22;
       } else if (params.surfaceShape === 'cylinder') {
-        clone.position.set(Math.sin(angle) * source.width * 0.38, (unit - 0.5) * source.height * 1.2);
+        clone.position.set(Math.sin(angle) * bounds.width * 0.38, (unit - 0.5) * bounds.height * 1.2);
         clone.scale.set(0.25 + Math.abs(Math.cos(angle)) * 0.38, 0.5);
         clone.rotation = 0;
       } else {
-        clone.position.set((unit - 0.5) * source.width * 1.4, Math.sin(angle) * source.height * 0.5);
+        clone.position.set((unit - 0.5) * bounds.width * 1.4, Math.sin(angle) * bounds.height * 0.5);
         clone.scale.set(0.34);
         clone.rotation = Math.cos(angle) * 0.12;
       }
       clone.alpha = 0.08 + Math.max(0, Math.cos(angle)) * 0.24;
-      clone.blendMode = PIXI.BLEND_MODES.SCREEN;
+      // Container は blendMode を持たないため、各文字へ設定する。
+      clone.children.forEach(child => {
+        if (child instanceof PIXI.Text) child.blendMode = PIXI.BLEND_MODES.SCREEN;
+      });
     }
     container.children
       .filter(child => child.name?.startsWith(`${EFFECT_PREFIX}surface-`))

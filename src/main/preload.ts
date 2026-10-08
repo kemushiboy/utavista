@@ -26,7 +26,28 @@ const electronAPI = {
     ipcRenderer.on('file:open-project-requested', listener);
     return () => ipcRenderer.removeListener('file:open-project-requested', listener);
   },
-  
+
+  // 終了前の確認: メインプロセスからの問い合わせに、未保存かどうか／保存できたかを返す。
+  onUnsavedChangesQuery: (handler: () => boolean | Promise<boolean>): (() => void) => {
+    const listener = async (_event: unknown, requestId: number) => {
+      let dirty = false;
+      try { dirty = await handler(); } catch { dirty = false; }
+      ipcRenderer.send('app:unsaved-result', requestId, { dirty });
+    };
+    ipcRenderer.on('app:query-unsaved', listener);
+    return () => ipcRenderer.removeListener('app:query-unsaved', listener);
+  },
+
+  onSaveBeforeClose: (handler: () => Promise<boolean>): (() => void) => {
+    const listener = async (_event: unknown, requestId: number) => {
+      let saved = false;
+      try { saved = await handler(); } catch { saved = false; }
+      ipcRenderer.send('app:save-before-close-result', requestId, saved);
+    };
+    ipcRenderer.on('app:save-before-close', listener);
+    return () => ipcRenderer.removeListener('app:save-before-close', listener);
+  },
+
   selectMedia: (type: 'video' | 'audio' | 'image'): Promise<MediaFileInfo> =>
     ipcRenderer.invoke('file:select-media', type),
 
@@ -46,7 +67,27 @@ const electronAPI = {
   // Video export save dialog
   showSaveDialogForVideo: (defaultFileName: string): Promise<string | null> =>
     ipcRenderer.invoke('export:showSaveDialogForVideo', defaultFileName),
-  
+  showSaveDialogForAlphaVideo: (defaultFileName: string): Promise<string | null> =>
+    ipcRenderer.invoke('export:showSaveDialogForAlphaVideo', defaultFileName),
+
+  // 透過背景の書き出し（ProRes 4444）
+  alphaExportStart: (options: {
+    sessionId: string;
+    width: number;
+    height: number;
+    fps: number;
+    totalFrames: number;
+    outputPath: string;
+    audioPath?: string;
+    audioStartMs?: number;
+  }): Promise<void> => ipcRenderer.invoke('export:alpha:start', options),
+  alphaExportFrame: (payload: { sessionId: string; data: Uint8Array }): Promise<void> =>
+    ipcRenderer.invoke('export:alpha:frame', payload),
+  alphaExportFinalize: (options: { sessionId: string }): Promise<string> =>
+    ipcRenderer.invoke('export:alpha:finalize', options),
+  alphaExportCancel: (options: { sessionId: string }): Promise<void> =>
+    ipcRenderer.invoke('export:alpha:cancel', options),
+
   // Seek and Snap Video Export (new)
   createTempSession: (sessionId: string): Promise<string> =>
     ipcRenderer.invoke('export:createTempSession', sessionId),
@@ -102,6 +143,7 @@ const electronAPI = {
     width: number;
     height: number;
     audioPath?: string;
+    audioStartMs?: number;
     outputPath?: string;
     totalFrames?: number;
     totalDurationMs?: number;
