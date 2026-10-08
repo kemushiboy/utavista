@@ -403,3 +403,22 @@
   line-height: 1.4;
   font-family: var(--font-primary);
 }
+/* 開発者向けデバッグ情報（折りたたみ） */
+.settings-debug > summary {
+  cursor: pointer;
+  font-size: var(--text-subtitle);
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: var(--space-sm) 0;
+  font-family: var(--font-primary);
+}
+
+.settings-debug .debug-tab {
+  height: auto;
+  padding: var(--space-sm) 0 0;
+}
+
+/* 折りたたみの見出しと重複するため、デバッグ情報内の見出しは表示しない */
+.settings-debug .debug-tab > h3 {
+  display: none;
+}
